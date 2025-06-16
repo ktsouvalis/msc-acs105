@@ -151,8 +151,6 @@ void loop() {
     // dR > 20, πλησίασε δεξιά πρώτα
     setMotors(120, 120);
     steering.write(45);  // δεξιά
-    delay(300);
-    steering.write(90);
     if(dF < 50){
       if(df > 20){
         setMotors(60, 60);   // χαμηλή ταχύτητα
