@@ -147,30 +147,36 @@ void loop() {
   int dR = measureSensor(TRIG_R, ECHO_R);
   int dL = measureSensor(TRIG_L, ECHO_L);
 
-  // Right-hand rule logic with speed control and obstacle avoidance
-  if (dR <= 20) {
-    setMotors(180, 180);
-    steering.write(90);  // ευθεία
-    
-  } else {
+  if(dR > 20){
     // dR > 20, πλησίασε δεξιά πρώτα
     setMotors(120, 120);
     steering.write(45);  // δεξιά
     delay(300);
+    steering.write(90);
+    if(dF < 50){
+      if(df > 20){
+        setMotors(60, 60);   // χαμηλή ταχύτητα
+      }
+      else{
+        setMotors(0,0)
+      }
+    }
+  } 
+  else { // dR <=20
+    setMotors(180, 180);
     steering.write(90);  // ευθεία
-  }
-  
-  if (dF <= 20) {
+    if (dF <= 20) {
       // Πολύ κοντά εμπόδιο μπροστά, στρίψε αριστερά
       setMotors(100, 100); // μέτρια ταχύτητα για στροφή
       steering.write(135); // αριστερά
       delay(400);
       steering.write(90);  // ευθεία
-  } 
-  else if (dF <= 50) {
+    } 
+    else if (dF <= 50) {
       // Εμπόδιο μπροστά, κόψε ταχύτητα αλλά συνέχισε ευθεία
       setMotors(60, 60);   // χαμηλή ταχύτητα
       steering.write(90);  // ευθεία
+    }
   }
   
 
