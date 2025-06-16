@@ -43,6 +43,16 @@ const float BATT_R2 = 2000.0;  // 2k
 const float ADC_REF = 5.0;     // V
 const float ADC_RES = 1023.0;
 
+enum State {
+  GO_FORWARD,
+  TURN_RIGHT,
+  TURN_LEFT,
+  STOPPED
+};
+
+State currentState = GO_FORWARD;
+State previousState = GO_FORWARD;
+
 void setup() {
   Serial.begin(9600);
   Serial1.begin(9600); // GPS
@@ -148,42 +158,57 @@ void loop() {
   int dL = measureSensor(TRIG_L, ECHO_L);
 
   // Right-hand rule logic with speed control and obstacle avoidance
-  if (dF < 20) {
-    // Braking at 20cm from obstacle
-    setMotors(0, 0);
-    steering.write(90);
-  } else if (dF < 50) {
-    // Slow down and check for free path
-    setMotors(25, 25); // 10% duty cycle
-    if (dR > 30) {
-      steering.write(45); // turn right
-    } else if (dL > 30) {
-      steering.write(135); // turn left
+  int speed = 0;
+  int direction = 90;
+
+  // === Sensor decision logic ===
+  if (dR > 20) {
+    // Right is clear, try to turn right
+    if (dF < 50) {
+      currentState = (dF > 20) ? TURN_RIGHT : STOPPED;
     } else {
-      steering.write(90); // straight
+      currentState = TURN_RIGHT;
     }
   } else {
-    // Normal speed and right-hand rule
-    if (dR > 20) {
-      setMotors(180, 180);
-      steering.write(45); // turn right
-      delay(300);
-      steering.write(90);
-    } else if (dF < 50){
-        setMotors(100, 100); // slow down
-        steering.write(90); // go straight
-    } else if (dF < 20) {
-      setMotors(180, 180);
-      steering.write(135); // turn left
-      delay(400);
-      steering.write(90);
+    // Right is blocked
+    if (dF <= 20) {
+      currentState = TURN_LEFT;
+    } else if (dF <= 50) {
+      currentState = GO_FORWARD; // but slow
     } else {
-      setMotors(200, 200);
-      steering.write(90);
+      currentState = GO_FORWARD; // fast
     }
   }
 
-  if(dR<20)
+  // === Action based on state ===
+  if (currentState != previousState) {
+    switch (currentState) {
+      case TURN_RIGHT:
+        speed = 120;
+        direction = 45;
+        break;
+
+      case TURN_LEFT:
+        speed = 100;
+        direction = 135;
+        break;
+
+      case GO_FORWARD:
+        speed = (dF <= 50) ? 60 : 180;
+        direction = 90;
+        break;
+
+      case STOPPED:
+        speed = 0;
+        direction = 90;
+        break;
+    }
+
+    setMotors(speed, speed);
+    steering.write(direction);
+
+    previousState = currentState;
+  }
 
   // MQ-2 logic: detect CO/LPG and send telemetry if threshold exceeded
   int co_ppm, lpg_ppm;
