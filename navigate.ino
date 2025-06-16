@@ -148,42 +148,31 @@ void loop() {
   int dL = measureSensor(TRIG_L, ECHO_L);
 
   // Right-hand rule logic with speed control and obstacle avoidance
-  if (dF < 20) {
-    // Braking at 20cm from obstacle
-    setMotors(0, 0);
-    steering.write(90);
-  } else if (dF < 50) {
-    // Slow down and check for free path
-    setMotors(25, 25); // 10% duty cycle
-    if (dR > 30) {
-      steering.write(45); // turn right
-    } else if (dL > 30) {
-      steering.write(135); // turn left
-    } else {
-      steering.write(90); // straight
-    }
+  if (dR <= 20) {
+    setMotors(180, 180);
+    steering.write(90);  // ευθεία
+    
   } else {
-    // Normal speed and right-hand rule
-    if (dR > 20) {
-      setMotors(180, 180);
-      steering.write(45); // turn right
-      delay(300);
-      steering.write(90);
-    } else if (dF < 50){
-        setMotors(100, 100); // slow down
-        steering.write(90); // go straight
-    } else if (dF < 20) {
-      setMotors(180, 180);
-      steering.write(135); // turn left
-      delay(400);
-      steering.write(90);
-    } else {
-      setMotors(200, 200);
-      steering.write(90);
-    }
+    // dR > 20, πλησίασε δεξιά πρώτα
+    setMotors(120, 120);
+    steering.write(45);  // δεξιά
+    delay(300);
+    steering.write(90);  // ευθεία
   }
-
-  if(dR<20)
+  
+  if (dF <= 20) {
+      // Πολύ κοντά εμπόδιο μπροστά, στρίψε αριστερά
+      setMotors(100, 100); // μέτρια ταχύτητα για στροφή
+      steering.write(135); // αριστερά
+      delay(400);
+      steering.write(90);  // ευθεία
+  } 
+  else if (dF <= 50) {
+      // Εμπόδιο μπροστά, κόψε ταχύτητα αλλά συνέχισε ευθεία
+      setMotors(60, 60);   // χαμηλή ταχύτητα
+      steering.write(90);  // ευθεία
+  }
+  
 
   // MQ-2 logic: detect CO/LPG and send telemetry if threshold exceeded
   int co_ppm, lpg_ppm;
