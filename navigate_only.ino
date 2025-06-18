@@ -100,12 +100,10 @@ void followWall(int rightDist, int speed) {
 }
 
 void moveForward(int speed) {
-  //analogWrite(ENA, speed);
-  analogWrite(ENB, speed);
   analogWrite(ENA, speed);
-  //digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  analogWrite(ENB, speed);
   digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
 }
 
 void stopMotors() {
@@ -128,10 +126,10 @@ void steerRight() {
 void turnLeft() {
   // Slight reverse and left
   steerLeft();
-  //analogWrite(ENA, 150);
-  //analogWrite(ENB, 150);
-  //digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
-  //digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  analogWrite(ENA, 150);
+  analogWrite(ENB, 150);
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
   delay(600);  // delay for servo to move, xreiazetai tuning
   stopMotors();
 }
@@ -146,10 +144,10 @@ void loop() {
   } else if (frontDist <= FRONT_SLOW_DIST && frontDist > FRONT_STOP_DIST) {
     followWall(rightDist, SLOW_SPEED);
   } else if (frontDist <= FRONT_STOP_DIST) {
-    if (abs(rightDist - DESIRED_RIGHT_DIST) < 5) { // check with tolerance
+    if (rightDist < DESIRED_RIGHT_DIST + 2) { // check with tolerance for right opening
       turnLeft();
     } else {
-      stopMotors(); // Edo thelei ligo skepsi
+      followWall(rightDist, SLOW_SPEED); // If front distance is <= 20 then follow the right opening
     }
   }
   delay(100);
