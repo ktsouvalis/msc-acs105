@@ -1,4 +1,3 @@
-
 // Ignore this first bit but don't delete or change it
 // this bit is usually hidden inside 
 // #import <NewPing.h>
@@ -43,6 +42,8 @@ class NewPing {
 
 //#include <NewPing.h>
 #include <Servo.h>
+#include <TinyGPS++.h>
+#include <LoRa.h> // SX1278 LoRa module
 
 // Ultrasound Pins
 #define TRIG_FRONT 2
@@ -69,12 +70,33 @@ NewPing sonarRight(TRIG_RIGHT, ECHO_RIGHT, MAX_DISTANCE);
 Servo steering;
 #define SERVO_PIN 11
 
+// GPS
+TinyGPSPlus gps;
+
+
+// Battery voltage sense pin
+#define BATT_PIN A2
+
+// MQ-2 sensor pin (add if missing)
+#define MQ2_PIN A0
+
+// Thresholds
+const int CO_THRESHOLD = 50;    // ppm
+const int LPG_THRESHOLD = 2100; // ppm
+
+// Calibration values for battery voltage divider
+const float BATT_R1 = 10000.0; // 10k
+const float BATT_R2 = 2000.0;  // 2k
+const float ADC_REF = 5.0;     // V
+const float ADC_RES = 1023.0;
+
 // Constants
 const int NORMAL_SPEED = 200;
 const int SLOW_SPEED = 50;
 const int DESIRED_RIGHT_DIST = 20;
 const int FRONT_SLOW_DIST = 50;
 const int FRONT_STOP_DIST = 20;
+unsigned long lastGPSTime = 0; // For 1Hz sampling
 
 void setup() {
   pinMode(IN1, OUTPUT);
@@ -86,12 +108,35 @@ void setup() {
   
   steering.attach(SERVO_PIN);
   Serial.begin(9600);
+  LoRa.begin(433E6); // Initialize LoRa at 433MHz
+}
+
+float readBatteryVoltage() {
+  int raw = analogRead(BATT_PIN);
+  float vout = (raw * ADC_REF) / ADC_RES;
+  float vin = vout / (BATT_R2 / (BATT_R1 + BATT_R2));
+  return vin;
+}
+
+void readMQ2(int &co_ppm, int &lpg_ppm) {
+  int mq2_raw = analogRead(MQ2_PIN);
+  co_ppm = map(mq2_raw, 0, 1023, 0, 1000);   // simplified approach: not accurate, just for demonstration
+  lpg_ppm = map(mq2_raw, 0, 1023, 0, 5000);  // simplified approach: not accurate, just for demonstration
+}
+
+void sendTelemetry(int lpg_ppm, int co_ppm, float batt_voltage) {
+  String msg = String(gps.location.lat(), 6) + "," +
+               String(gps.location.lng(), 6) + "," +
+               String(lpg_ppm) + "," +
+               String(co_ppm) + "," +
+               String(batt_voltage, 2);
+  LoRa.println(msg);
 }
 
 void followWall(int rightDist, int speed) {
-  if (rightDist > DESIRED_RIGHT_DIST + 2) { //check with tolerance
+  if (rightDist > DESIRED_RIGHT_DIST + 2) { // Too far from wall with tolerance
     steerRight();
-  } else if (rightDist < DESIRED_RIGHT_DIST - 2) { // check with tolerance
+  } else if (rightDist < DESIRED_RIGHT_DIST - 2) { // Too close to wall with tolerance
     steerLeft();
   } else {
     steerStraight();
@@ -139,18 +184,61 @@ void loop() {
   int frontDist = sonarFront.ping_cm(); //find front distance
   int rightDist = sonarRight.ping_cm(); //find right distance
 
+  // Navigation logic: wall following and obstacle avoidance
   if (frontDist > FRONT_SLOW_DIST) {
     followWall(rightDist, NORMAL_SPEED);
   } else if (frontDist <= FRONT_SLOW_DIST && frontDist > FRONT_STOP_DIST) {
     followWall(rightDist, SLOW_SPEED);
   } else if (frontDist <= FRONT_STOP_DIST) {
-    if (rightDist < DESIRED_RIGHT_DIST + 2) { // check with tolerance for right opening
+    if (rightDist < DESIRED_RIGHT_DIST + 2) { // Right is blocked, turn left with tolerance
       turnLeft();
     } else {
-      followWall(rightDist, SLOW_SPEED); // If front distance is <= 20 then follow the right opening
+      followWall(rightDist, SLOW_SPEED); // Right is open, follow wall slowly (turn into opening)
     }
   }
-  delay(100);
+
+  // === 1Hz GPS sampling and telemetry ===
+  unsigned long now = millis();
+  if (now - lastGPSTime >= 1000) {
+    lastGPSTime = now;
+
+    // Read sensors
+    int co_ppm, lpg_ppm;
+    readMQ2(co_ppm, lpg_ppm);
+    float batt_voltage = readBatteryVoltage();
+
+    // Read GPS
+    while (Serial1.available()) gps.encode(Serial1.read());
+    // Send telemetry every second
+    sendTelemetry(lpg_ppm, co_ppm, batt_voltage);
+
+    // Εκτίμηση χρόνου λειτουργίας (απλή προσέγγιση)
+    float min_voltage = 6.0;
+    float max_voltage = 8.4;
+    float percent = (batt_voltage - min_voltage) / (max_voltage - min_voltage);
+    percent = constrain(percent, 0, 1);
+    Serial.print("Estimated battery %: ");
+    Serial.println(percent * 100, 1);
+  }
+
+  // === Fire/gas detection and emergency telemetry ===
+  int co_ppm, lpg_ppm;
+  readMQ2(co_ppm, lpg_ppm);
+  float batt_voltage = readBatteryVoltage();
+  if (co_ppm > CO_THRESHOLD || lpg_ppm > LPG_THRESHOLD) {
+    // Read GPS for current position
+    while (Serial1.available()) gps.encode(Serial1.read());
+
+    Serial.print("CO: "); Serial.print(co_ppm);
+    Serial.print(" ppm, LPG: "); Serial.print(lpg_ppm);
+    Serial.print(" ppm, Battery: "); Serial.println(batt_voltage, 2);
+
+    // Send emergency telemetry (same format)
+    sendTelemetry(lpg_ppm, co_ppm, batt_voltage);
+    delay(500); // avoid spamming
+  }
+
+  delay(100); // Main loop delay for sensor stability
 }
 
 
