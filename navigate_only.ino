@@ -98,6 +98,65 @@ const int FRONT_SLOW_DIST = 50;
 const int FRONT_STOP_DIST = 20;
 unsigned long lastGPSTime = 0; // For 1Hz sampling
 
+// --- Route saving variables ---
+#define MAX_WAYPOINTS 500
+double route_lat[MAX_WAYPOINTS];
+double route_lon[MAX_WAYPOINTS];
+int route_size = 0;
+
+// Minimum distance (meters) between saved waypoints to avoid duplicates
+#define WAYPOINT_MIN_DIST 2.0
+
+// Helper: Calculate distance between two GPS points (Haversine, simplified for short distances)
+float gpsDistance(double lat1, double lon1, double lat2, double lon2) {
+  const float R = 6371000.0; // Earth radius in meters
+  float dLat = radians(lat2 - lat1);
+  float dLon = radians(lon2 - lon1);
+  float a = sin(dLat/2)*sin(dLat/2) + cos(radians(lat1))*cos(radians(lat2))*sin(dLon/2)*sin(dLon/2);
+  float c = 2 * atan2(sqrt(a), sqrt(1-a));
+  return R * c;
+}
+
+// Helper: Save current GPS position as a waypoint if far enough from last
+void saveCurrentWaypoint() {
+  double lat = gps.location.lat();
+  double lon = gps.location.lng();
+  if (route_size == 0 || gpsDistance(route_lat[route_size-1], route_lon[route_size-1], lat, lon) > WAYPOINT_MIN_DIST) {
+    if (route_size < MAX_WAYPOINTS) {
+      route_lat[route_size] = lat;
+      route_lon[route_size] = lon;
+      route_size++;
+    }
+  }
+}
+
+// Helper: Calculate bearing from current position to target waypoint
+float gpsBearing(double lat1, double lon1, double lat2, double lon2) {
+  float dLon = radians(lon2 - lon1);
+  float y = sin(dLon) * cos(radians(lat2));
+  float x = cos(radians(lat1)) * sin(radians(lat2)) -
+            sin(radians(lat1)) * cos(radians(lat2)) * cos(dLon);
+  float brng = atan2(y, x);
+  brng = degrees(brng);
+  if (brng < 0) brng += 360;
+  return brng;
+}
+
+// Helper: Steer toward a bearing (simple version)
+void steerToBearing(float bearing) {
+  // 0 = North, 90 = East, 180 = South, 270 = West
+  // Assume 90 is straight, 60 is right, 120 is left
+  if (bearing > 315 || bearing < 45) {
+    steerStraight();
+  } else if (bearing >= 45 && bearing < 135) {
+    steerRight();
+  } else if (bearing >= 135 && bearing < 225) {
+    steerStraight(); // Could implement reverse if needed
+  } else {
+    steerLeft();
+  }
+}
+
 void setup() {
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -179,21 +238,66 @@ void turnLeft() {
   stopMotors();
 }
 
+// Add a flag to enable return-to-home mode
+bool returning = false;
 
 void loop() {
   int frontDist = sonarFront.ping_cm(); //find front distance
   int rightDist = sonarRight.ping_cm(); //find right distance
 
-  // Navigation logic: wall following and obstacle avoidance
-  if (frontDist > FRONT_SLOW_DIST) {
-    followWall(rightDist, NORMAL_SPEED);
-  } else if (frontDist <= FRONT_SLOW_DIST && frontDist > FRONT_STOP_DIST) {
-    followWall(rightDist, SLOW_SPEED);
-  } else if (frontDist <= FRONT_STOP_DIST) {
-    if (rightDist < DESIRED_RIGHT_DIST + 2) { // Right is blocked, turn left with tolerance
-      turnLeft();
+  // --- Battery and position check for return-to-home ---
+  float batt_voltage = readBatteryVoltage();
+  float min_voltage = 6.0;
+  float max_voltage = 8.4;
+  float percent = (batt_voltage - min_voltage) / (max_voltage - min_voltage);
+  percent = constrain(percent, 0, 1);
+
+  // Check if at return point (last waypoint)
+  bool at_return_point = false;
+  if (route_size > 0 && gps.location.isValid()) {
+    double lat = gps.location.lat();
+    double lon = gps.location.lng();
+    float dist_to_return = gpsDistance(lat, lon, route_lat[route_size-1], route_lon[route_size-1]);
+    if (dist_to_return < WAYPOINT_MIN_DIST) {
+      at_return_point = true;
+    }
+  }
+
+  // Set returning true if battery ≤15% or at return point (last waypoint)
+  if (!returning && (percent <= 0.15 || at_return_point)) {
+    returning = true;
+  }
+
+  // --- Return-to-home logic ---
+  static int return_idx = -1;
+  if (returning) {
+    // If just started returning, set index to last waypoint
+    if (return_idx == -1) return_idx = route_size - 1;
+    if (return_idx >= 0 && gps.location.isValid()) {
+      double lat = gps.location.lat();
+      double lon = gps.location.lng();
+      float dist = gpsDistance(lat, lon, route_lat[return_idx], route_lon[return_idx]);
+      float bearing = gpsBearing(lat, lon, route_lat[return_idx], route_lon[return_idx]);
+      steerToBearing(bearing);
+      moveForward(NORMAL_SPEED);
+      if (dist < WAYPOINT_MIN_DIST) {
+        return_idx--;
+      }
     } else {
-      followWall(rightDist, SLOW_SPEED); // Right is open, follow wall slowly (turn into opening)
+      stopMotors(); // Arrived home or no waypoints
+    }
+  } else {
+    // --- Normal navigation logic: wall following and obstacle avoidance ---
+    if (frontDist > FRONT_SLOW_DIST) {
+      followWall(rightDist, NORMAL_SPEED);
+    } else if (frontDist <= FRONT_SLOW_DIST && frontDist > FRONT_STOP_DIST) {
+      followWall(rightDist, SLOW_SPEED);
+    } else if (frontDist <= FRONT_STOP_DIST) {
+      if (rightDist < DESIRED_RIGHT_DIST + 2) { // Right is blocked, turn left with tolerance
+        turnLeft();
+      } else {
+        followWall(rightDist, SLOW_SPEED); // Right is open, follow wall slowly (turn into opening)
+      }
     }
   }
 
@@ -205,7 +309,6 @@ void loop() {
     // Read sensors
     int co_ppm, lpg_ppm;
     readMQ2(co_ppm, lpg_ppm);
-    float batt_voltage = readBatteryVoltage();
 
     // Read GPS
     while (Serial1.available()) gps.encode(Serial1.read());
@@ -213,10 +316,6 @@ void loop() {
     sendTelemetry(lpg_ppm, co_ppm, batt_voltage);
 
     // Εκτίμηση χρόνου λειτουργίας (απλή προσέγγιση)
-    float min_voltage = 6.0;
-    float max_voltage = 8.4;
-    float percent = (batt_voltage - min_voltage) / (max_voltage - min_voltage);
-    percent = constrain(percent, 0, 1);
     Serial.print("Estimated battery %: ");
     Serial.println(percent * 100, 1);
   }
@@ -236,6 +335,15 @@ void loop() {
     // Send emergency telemetry (same format)
     sendTelemetry(lpg_ppm, co_ppm, batt_voltage);
     delay(500); // avoid spamming
+  }
+
+  // Save route while navigating (not returning)
+  static unsigned long lastSave = 0;
+  if (!returning && millis() - lastSave > 1000) {
+    lastSave = millis();
+    if (gps.location.isValid()) {
+      saveCurrentWaypoint();
+    }
   }
 
   delay(100); // Main loop delay for sensor stability
