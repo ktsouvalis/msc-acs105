@@ -1,0 +1,123 @@
+# Unmanned Fire Detection Robot - Circuit Connections
+
+Since a full Fritzing (.fzz) file cannot be created directly in this environment, I'll provide detailed connection instructions that can be used to create the circuit diagram in Fritzing.
+
+## Components Required:
+
+1. Arduino Mega 2560
+2. 3× HC-SR04 Ultrasonic Sensors
+3. L298N Motor Driver
+4. 2× DC Motors (for rear wheels)
+5. 1× Servo Motor (for front steering)
+6. MQ-2 Gas Sensor
+7. NEO-6M GPS Module
+8. QMC5883L Digital Compass
+9. SX1278 LoRa Module
+10. Voltage Divider (10kΩ and 2kΩ resistors)
+11. TATTU 2300mAh 14.8V LiPo Battery
+12. 2× DC-DC Buck Converters (14.8V to 5V and 14.8V to 6V)
+
+## Connection Details:
+
+### Power Distribution:
+- TATTU 14.8V LiPo Battery → Main Power Switch
+- Main Power Switch → Voltage Divider (for battery monitoring)
+- Main Power Switch → 5V Buck Converter → Arduino Mega, Sensors, GPS, LoRa
+- Main Power Switch → 6V Buck Converter → Servo Motor
+- Main Power Switch → L298N Motor Driver → DC Motors
+
+### Arduino Mega Connections:
+
+#### Ultrasonic Sensors:
+- Front Sensor:
+  - Trigger → Pin 2
+  - Echo → Pin 3
+  - VCC → 5V
+  - GND → GND
+
+- Right Sensor:
+  - Trigger → Pin 4
+  - Echo → Pin 5
+  - VCC → 5V
+  - GND → GND
+
+- Left Sensor:
+  - Trigger → Pin 6
+  - Echo → Pin 7
+  - VCC → 5V
+  - GND → GND
+
+#### L298N Motor Driver:
+- ENA → Pin 9 (PWM)
+- IN1 → Pin 22
+- IN2 → Pin 23
+- ENB → Pin 8 (PWM)
+- IN3 → Pin 24
+- IN4 → Pin 25
+- 12V → Battery (via switch)
+- GND → GND
+
+#### Servo Motor:
+- Signal → Pin 11 (PWM)
+- VCC → 6V (from Buck Converter)
+- GND → GND
+
+#### MQ-2 Gas Sensor:
+- Analog Output → Pin A0
+- VCC → 5V
+- GND → GND
+
+#### Battery Voltage Monitoring:
+- Voltage Divider Output → Pin A2
+- Voltage Divider: Battery+ → 10kΩ → Pin A2 → 2kΩ → GND
+
+#### QMC5883L Digital Compass:
+- SDA → Pin 20 (SDA)
+- SCL → Pin 21 (SCL)
+- VCC → 3.3V
+- GND → GND
+
+#### NEO-6M GPS Module:
+- TX → Pin 19 (RX1)
+- RX → Pin 18 (TX1)
+- PPS → Pin 2 (shared with front ultrasonic trigger)
+- VCC → 5V
+- GND → GND
+
+#### SX1278 LoRa Module:
+- MOSI → Pin 51
+- MISO → Pin 50
+- SCK → Pin 52
+- NSS → Pin 53
+- RST → Pin 49
+- DIO0 → Pin 48
+- VCC → 3.3V
+- GND → GND
+
+## Fritzing Diagram Instructions:
+
+1. Place the Arduino Mega 2560 in the center of the breadboard view
+2. Add all components around it
+3. Connect power distribution first:
+   - Add battery, switch, and buck converters
+   - Connect power lines to all components
+4. Connect signal lines according to the pin assignments above
+5. Group related components together (e.g., ultrasonic sensors, motor control)
+6. Use different wire colors for clarity:
+   - Red for positive power
+   - Black for ground
+   - Yellow for signal/data lines
+   - Blue for I2C connections
+   - Green for SPI connections
+
+## Notes:
+
+1. The PPS pin from the GPS module shares Pin 2 with the front ultrasonic sensor trigger. In a real implementation, you might need to use a different pin or implement time-sharing between these functions.
+
+2. The MQ-2 sensor requires a warmup period (implemented in the code with a 20-second delay).
+
+3. The voltage divider for battery monitoring should be adjusted based on the actual battery voltage and Arduino reference voltage.
+
+4. The L298N motor driver might require additional connections for motor power depending on the specific module used.
+
+5. The QMC5883L compass should be mounted away from motors and other magnetic sources to avoid interference.

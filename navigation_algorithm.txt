@@ -1,0 +1,154 @@
+# Unmanned Fire Detection Robot - Navigation Algorithm Visualization
+
+## Right-Hand Rule Navigation
+
+```
+                Front Sensor
+                     |
+                     v
+                  [Robot]
+                 /     \
+                /       \
+Left Sensor -->*         *<-- Right Sensor
+                \       /
+                 \     /
+                  [   ]
+```
+
+## Decision Tree
+
+```
+Start
+  |
+  v
+Read Sensors (Front, Right, Left distances)
+  |
+  v
+Is Front Distance > 50cm?
+  |
+  +---Yes---> Move at Normal Speed (100% duty cycle)
+  |             |
+  |             v
+  |           Follow Right Wall (maintain 20cm distance)
+  |             |
+  |             v
+  |           Continue
+  |
+  +---No----> Is Front Distance > 20cm?
+                |
+                +---Yes---> Move at Slow Speed (10% duty cycle)
+                |             |
+                |             v
+                |           Follow Right Wall (maintain 20cm distance)
+                |             |
+                |             v
+                |           Continue
+                |
+                +---No----> Stop Motors
+                              |
+                              v
+                            Is Right Distance > 25cm? (Right is open)
+                              |
+                              +---Yes---> Turn Right
+                              |             |
+                              |             v
+                              |           Continue
+                              |
+                              +---No----> Is Left Distance > 25cm? (Left is open)
+                                            |
+                                            +---Yes---> Turn Left
+                                            |             |
+                                            |             v
+                                            |           Continue
+                                            |
+                                            +---No----> Turn Around (180°)
+                                                          |
+                                                          v
+                                                        Continue
+```
+
+## Wall Following Logic
+
+```
+Follow Right Wall:
+  |
+  v
+Is Right Distance > 25cm? (Too far from wall)
+  |
+  +---Yes---> Steer Right
+  |             |
+  |             v
+  |           Continue
+  |
+  +---No----> Is Right Distance < 18cm? (Too close to wall)
+                |
+                +---Yes---> Steer Left
+                |             |
+                |             v
+                |           Continue
+                |
+                +---No----> Steer Straight
+                              |
+                              v
+                            Continue
+```
+
+## Fire/Gas Detection Logic
+
+```
+Main Loop
+  |
+  v
+Read MQ-2 Sensor
+  |
+  v
+Is CO > 50ppm OR LPG > 2100ppm?
+  |
+  +---Yes---> Is this the first detection? (fireDetected == false)
+  |             |
+  |             +---Yes---> Set fireDetected = true
+  |             |             |
+  |             |             v
+  |             |           Record GPS Position
+  |             |             |
+  |             |             v
+  |             |           Send Emergency Telemetry
+  |             |             |
+  |             |             v
+  |             |           Continue Navigation
+  |             |
+  |             +---No----> Continue Navigation
+  |
+  +---No----> Reset fireDetected = false
+                |
+                v
+              Continue Navigation
+```
+
+## Telemetry System (1Hz)
+
+```
+Every 1 second:
+  |
+  v
+Read GPS Data
+  |
+  v
+Read Battery Voltage
+  |
+  v
+Read Gas Sensors
+  |
+  v
+Format Data: "lat,lon,LPG_ppm,CO_ppm,batt_voltage"
+  |
+  v
+Transmit via LoRa
+  |
+  v
+Continue
+```
+
+This ASCII representation shows the key decision points in the navigation algorithm. The robot follows the right-hand rule by maintaining a constant distance from walls on its right side, while using the front sensor to detect obstacles and slow down or turn as needed.
+
+The fire/gas detection runs in parallel with the navigation system, continuously monitoring for dangerous conditions and sending alerts when thresholds are exceeded.
