@@ -11,7 +11,6 @@
  * - Servo motor for Ackermann steering
  * - MQ-2 Gas sensor for fire/gas detection
  * - NEO-6M GPS module
- * - QMC5883L Digital Compass
  * - SX1278 LoRa module for telemetry
  * - TATTU 2300mAh 14.8V LiPo Battery
  */
@@ -20,10 +19,16 @@
 #include <Servo.h>           // Steering servo
 #include <TinyGPS++.h>       // GPS module
 #include <LoRa.h>            // SX1278 LoRa module
-#include <Wire.h>            // I2C communication
-#include <QMC5883LCompass.h> // Digital compass
+#include <SD.h>
+
 
 // ===== PIN DEFINITIONS =====
+
+// --- SD Card Pins ---
+#define SD_CS_PIN 10
+#define SD_MOSI 11
+#define SD_MISO 12
+#define SD_SCK 13
 
 // Ultrasonic Sensors
 #define TRIG_FRONT 2
@@ -43,7 +48,7 @@
 #define IN4 25
 
 // Servo
-#define SERVO_PIN 11
+#define SERVO_PIN 44
 
 // Sensors
 #define MQ2_PIN A0      // MQ-2 Gas sensor
@@ -66,9 +71,6 @@ Servo steering;
 
 // GPS
 TinyGPSPlus gps;
-
-// Digital Compass
-QMC5883LCompass compass;
 
 // ===== CONSTANTS =====
 
@@ -114,7 +116,6 @@ unsigned long turnStartTime = 0;        // Turn start time
 // Navigation
 float startLat = 0;               // Starting latitude
 float startLon = 0;               // Starting longitude
-int heading = 0;                  // Current heading from compass
 bool missionStarted = false;      // Whether the mission has started
 bool fireDetected = false;        // Whether fire/gas has been detected
 
@@ -137,7 +138,6 @@ enum RobotState {
 };
 
 RobotState currentState = INITIALIZING;
-RobotState nextState = INITIALIZING;
 bool stateChanged = true;
 
 // ===== SETUP =====
@@ -146,9 +146,7 @@ void setup() {
   // Initialize serial communication
   Serial.begin(9600);
   Serial1.begin(9600); // For GPS module
-  
-  // Initialize I2C for compass
-  Wire.begin();
+
   
   // Initialize pins
   pinMode(IN1, OUTPUT);
@@ -162,16 +160,22 @@ void setup() {
   steering.attach(SERVO_PIN);
   steerStraight();
   
-  // Initialize compass
-  compass.init();
-  compass.setCalibration(-1309, 1558, -1965, 1029, -1401, 1285);
-  compass.setSmoothing(10, true);
-  
   // Initialize LoRa
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(433E6)) {
     Serial.println("LoRa initialization failed!");
     while (1);
+  }
+
+  // Initialze SD Card
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("SD init failed!");
+    while (1);
+  }
+  File f = SD.open("route.csv", FILE_WRITE);
+  if (f) {
+    f.println("lat,lon");
+    f.close();
   }
   
   // Record start time for MQ-2 warmup
@@ -197,6 +201,7 @@ void loop() {
             startLat = gps.location.lat();
             startLon = gps.location.lng();
             missionStarted = true;
+            saveCurrentWaypoint();
             Serial.println("GPS fix acquired. Mission starting!");
             Serial.print("Start position: ");
             Serial.print(startLat, 6);
@@ -246,6 +251,9 @@ void loop() {
     
     // Update GPS data
     updateGPS();
+
+    // Estimate remaining battery life
+    estimateBatteryLife();
     
     // Send regular telemetry
     sendTelemetry();
@@ -257,9 +265,6 @@ void loop() {
     Serial.print(":");
     Serial.print(missionTime % 60); // seconds
     Serial.println();
-    
-    // Estimate remaining battery life
-    estimateBatteryLife();
   }
 }
 
@@ -423,10 +428,6 @@ void readSensors() {
   if (rightDistance == 0) rightDistance = MAX_DISTANCE;
   if (leftDistance == 0) leftDistance = MAX_DISTANCE;
   
-  // Read compass
-  compass.read();
-  heading = compass.getAzimuth();
-  
   // Read battery voltage
   batteryVoltage = readBatteryVoltage();
   
@@ -489,6 +490,7 @@ void updateGPS() {
     Serial.print(gps.location.lng(), 6);
     Serial.print(", Satellites: ");
     Serial.println(gps.satellites.value());
+    saveCurrentWaypoint();
   }
 }
 
@@ -594,6 +596,20 @@ String formatTelemetryData() {
   data += String(batteryVoltage, 2);
   
   return data;
+}
+
+void saveCurrentWaypoint() {
+  double lat = gps.location.lat();
+  double lon = gps.location.lng();
+  static double lastLat = 0, lastLon = 0;
+  if (gpsDistance(lastLat, lastLon, lat, lon) > WAYPOINT_MIN_DIST) {
+    lastLat = lat; lastLon = lon;
+    File f = SD.open("route.csv", FILE_WRITE);
+    if (f) {
+      f.print(lat, 6); f.print(','); f.println(lon, 6);
+      f.close();
+    }
+  }
 }
 
 // ===== BATTERY MANAGEMENT =====
