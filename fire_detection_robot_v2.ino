@@ -442,9 +442,6 @@ void readSensors() {
     Serial.print(rightDistance);
     Serial.print(" cm, Left: ");
     Serial.print(leftDistance);
-    Serial.print(" cm, Heading: ");
-    Serial.print(heading);
-    Serial.println("°");
   }
 }
 
