@@ -1,169 +1,167 @@
 /*
- * Unmanned Fire Detection Robot - Version 3 (Enhanced with Advanced Battery Management)
+ * Μη Επανδρωμένο όχημα Ανίχνευσης Φωτιάς
  * 
- * This version includes:
- * - INA260 current/voltage/power monitoring for accurate coulomb counting
- * - GPS PPS integration for enhanced positioning accuracy
- * - Advanced battery management with non-linear LiPo modeling
- * - Telemetry with comprehensive power and GPS metrics
- * - Non-blocking timing techniques for improved responsiveness
+ * Αυτή η έκδοση περιλαμβάνει:
+ * - Παρακολούθηση ρεύματος/τάσης/ισχύος με χρήση του module INA260 για ακριβή μέτρηση
+ * - Ενσωμάτωση GPS PPS pin για βελτιωμένη ακρίβεια θέσης
+ * - Προηγμένη διαχείριση μπαταρίας με μη-γραμμική μοντελοποίηση LiPo
+ * - Τηλεμετρία με πλήρη στοιχεία ισχύος και GPS
  * 
- * Hardware:
+ * Υλικό:
  * - Arduino Mega 2560
- * - 3x HC-SR04 Ultrasonic sensors (front, 45° left, 45° right)
- * - L298N Motor Driver for DC motors
- * - Servo motor for Ackermann steering
- * - MQ-2 Gas sensor for fire/gas detection
- * - NEO-6M GPS module with PPS pin
- * - INA260 Current/Voltage/Power sensor
- * - SX1278 LoRa module for telemetry
- * - TATTU 2300mAh 14.8V LiPo Battery (4S configuration)
+ * - 3x Αισθητήρες υπερήχων HC-SR04 (μπροστά, 45° αριστερά, 45° δεξιά)
+ * - Οδηγός κινητήρα L298N για DC κινητήρες
+ * - Σερβοκινητήρας για διεύθυνση Ackermann
+ * - Αισθητήρας αερίου MQ-2 για ανίχνευση φωτιάς/αερίου
+ * - Μονάδα GPS NEO-6M με pin PPS
+ * - Αισθητήρας INA260 Ρεύματος/Τάσης/Ισχύος
+ * - Μονάδα SX1278 LoRa για τηλεμετρία
+ * - Μπαταρία TATTU 2300mAh 14.8V LiPo (διάταξη 4S)
  */
 
-#include <NewPing.h>         // Ultrasonic sensors
-#include <Servo.h>           // Steering servo
-#include <TinyGPS++.h>       // GPS module
-#include <LoRa.h>            // SX1278 LoRa module
-#include <SD.h>              // SD card logging
-#include <Wire.h>            // I2C communication
-#include <INA260_WE.h>       // INA260 current/voltage/power sensor
+#include <NewPing.h>         // Αισθητήρες υπερήχων
+#include <Servo.h>           // Σερβοκινητήρας
+#include <TinyGPS++.h>       // Μονάδα GPS
+#include <LoRa.h>            // Μονάδα SX1278 LoRa
+#include <SD.h>              // Καταγραφή σε κάρτα SD
+#include <Wire.h>            // Επικοινωνία I2C
+#include <INA260_WE.h>       // Αισθητήρας INA260 ρεύματος/τάσης/ισχύος
 
 // ===== PIN DEFINITIONS =====
 
-// --- SD Card Pins (Optimized for close physical grouping) ---
-// Note: SD card uses hardware SPI pins on Mega
-#define SD_CS_PIN 53    // Close to SPI pins for better connections
+// --- Pins κάρτας SD ---
+// Σημείωση: Η κάρτα SD χρησιμοποιεί τα hardware SPI pins στο Mega
+#define SD_CS_PIN 53    // Hardware SPI CS
 #define SD_MOSI 51      // Hardware SPI MOSI
 #define SD_MISO 50      // Hardware SPI MISO  
 #define SD_SCK 52       // Hardware SPI SCK
 
-// Ultrasonic Sensors (Grouped for easier wiring)
-#define TRIG_FRONT 30   // Digital pins grouped together
+// Αισθητήρες υπερήχων
+#define TRIG_FRONT 30 
 #define ECHO_FRONT 31
 #define TRIG_RIGHT 32
 #define ECHO_RIGHT 33
 #define TRIG_LEFT 34
 #define ECHO_LEFT 35
-#define MAX_DISTANCE 200 // Maximum distance for ultrasonic sensors (cm)
+#define MAX_DISTANCE 200 // Μέγιστη απόσταση για αισθητήρες υπερήχων (cm)
 
-// Motor Driver (L298N) - Grouped for easier connections
-#define ENA 9   // Left motor PWM
+// Οδηγός κινητήρα (L298N)
+#define ENA 9   // PWM αριστερού κινητήρα
 #define IN1 22  
 #define IN2 23  
-#define ENB 10  // Right motor PWM (back to 10, no conflict with new SD CS)
+#define ENB 10  // PWM δεξιού κινητήρα
 #define IN3 24
 #define IN4 25
 
 // Servo (PWM pin)
-#define SERVO_PIN 11    // PWM pin for servo control
+#define SERVO_PIN 11    // PWM pin για servo
 
-// Sensors
-#define MQ2_PIN A0      // MQ-2 Gas sensor
-#define GPS_PPS_PIN 2   // GPS PPS (Pulse Per Second) interrupt pin
+// Αισθητήρες
+#define MQ2_PIN A0      // Αισθητήρας αερίου MQ-2
+#define GPS_PPS_PIN 2   // Interrupt Pin PPS του GPS
 
-// LoRa Module (SX1278) - Moved to avoid SD card conflict
-#define LORA_SS 49      // NSS pin (moved from 53)
-#define LORA_RST 48     // Reset pin (moved from 49)
-#define LORA_DIO0 47    // DIO0 pin (moved from 48)
+// Μονάδα LoRa (SX1278)
+#define LORA_SS 49      // NSS pin 
+#define LORA_RST 48     // Reset pin
+#define LORA_DIO0 47    // DIO0 pin
 
-// I2C Addresses
-#define INA260_ADDRESS 0x40  // INA260 I2C address
+// Διευθύνσεις I2C
+#define INA260_ADDRESS 0x40  // Διεύθυνση I2C του INA260
 
-// ===== OBJECTS =====
+// ===== INITIALIZE MODULES =====
 
-// Ultrasonic sensors
+// Αισθητήρες υπερήχων
 NewPing sonarFront(TRIG_FRONT, ECHO_FRONT, MAX_DISTANCE);
 NewPing sonarRight(TRIG_RIGHT, ECHO_RIGHT, MAX_DISTANCE);
 NewPing sonarLeft(TRIG_LEFT, ECHO_LEFT, MAX_DISTANCE);
 
-// Servo for steering
+// Σερβοκινητήρας διεύθυνσης
 Servo steering;
 
 // GPS
 TinyGPSPlus gps;
 
-// INA260 Current/Voltage/Power sensor
+// Αισθητήρας INA260 Ρεύματος/Τάσης/Ισχύος
 INA260_WE ina260 = INA260_WE(INA260_ADDRESS);
 
 // ===== CONSTANTS =====
 
-// Navigation parameters
-const int NORMAL_SPEED = 200;     // Normal motor speed (PWM value)
-const int SLOW_SPEED = 50;        // Slow motor speed (PWM value)
-const int DESIRED_RIGHT_DIST = 20; // Desired distance from right wall (cm)
-const int FRONT_SLOW_DIST = 50;   // Distance to start slowing down (cm)
-const int FRONT_STOP_DIST = 20;   // Distance to stop/turn (cm)
+// Παράμετροι πλοήγησης
+const int NORMAL_SPEED = 200;     // Κανονική ταχύτητα κινητήρα (PWM)
+const int SLOW_SPEED = 50;        // Χαμηλή ταχύτητα κινητήρα (PWM)
+const int DESIRED_RIGHT_DIST = 20; // Επιθυμητή απόσταση από δεξιό τοίχο (cm)
+const int FRONT_SLOW_DIST = 50;   // Απόσταση για επιβράδυνση (cm)
+const int FRONT_STOP_DIST = 20;   // Απόσταση για στάση/στροφή (cm)
 
-// Sensor thresholds
-const int CO_THRESHOLD = 50;      // CO threshold in ppm
-const int LPG_THRESHOLD = 2100;   // LPG threshold in ppm
+// Όρια αισθητήρων
+const int CO_THRESHOLD = 50;      // Όριο CO σε ppm
+const int LPG_THRESHOLD = 2100;   // Όριο LPG σε ppm
 
-// Battery specifications (TATTU 2300mAh 14.8V LiPo - 4S)
-const float BATTERY_CAPACITY_MAH = 2300.0;    // Battery capacity in mAh
-const float CELL_COUNT = 4.0;                 // Number of cells in series
-const float CELL_VOLTAGE_MAX = 4.2;           // Maximum cell voltage (V)
-const float CELL_VOLTAGE_MIN = 3.3;           // Minimum safe cell voltage (V)
+// Προδιαγραφές μπαταρίας (TATTU 2300mAh 14.8V LiPo - 4S)
+const float BATTERY_CAPACITY_MAH = 2300.0;    // Χωρητικότητα μπαταρίας σε mAh
+const float CELL_COUNT = 4.0;                 // Αριθμός στοιχείων σε σειρά
+const float CELL_VOLTAGE_MAX = 4.2;           // Μέγιστη τάση στοιχείου (V)
+const float CELL_VOLTAGE_MIN = 3.3;           // Ελάχιστη ασφαλής τάση στοιχείου (V)
 const float BATTERY_VOLTAGE_MAX = CELL_COUNT * CELL_VOLTAGE_MAX; // 16.8V
 const float BATTERY_VOLTAGE_MIN = CELL_COUNT * CELL_VOLTAGE_MIN; // 13.2V
 
-// Servo angles
-const int SERVO_CENTER = 90;      // Straight position
-const int SERVO_LEFT = 120;       // Left turn position
-const int SERVO_RIGHT = 60;       // Right turn position
+// Γωνίες σερβοκινητήρα
+const int SERVO_CENTER = 90;      // Θέση ευθείας
+const int SERVO_LEFT = 120;       // Θέση αριστερής στροφής
+const int SERVO_RIGHT = 60;       // Θέση δεξιάς στροφής
 
-// Timing constants
-const unsigned long SENSOR_INTERVAL = 50;      // Sensor reading interval (ms)
-const unsigned long TELEMETRY_INTERVAL = 1000000; // Telemetry interval (μs)
-const unsigned long BATTERY_INTERVAL = 100;    // Battery monitoring interval (ms)
-const unsigned long MQ2_WARMUP_TIME = 20000;   // MQ-2 warmup time (ms)
-const unsigned long TURN_TIME_LEFT = 600;      // Time for left turn (ms)
-const unsigned long TURN_TIME_AROUND = 1200;   // Time for 180° turn (ms)
-const unsigned long TURN_TIME_RIGHT = 500;     // Time for right turn (ms)
+// Σταθερές χρονισμού
+const unsigned long SENSOR_INTERVAL = 50;      // ms
+const unsigned long TELEMETRY_INTERVAL = 1000000; // μs
+const unsigned long BATTERY_INTERVAL = 100;    // ms
+const unsigned long MQ2_WARMUP_TIME = 20000;   // Χρόνος προθέρμανσης MQ-2 (ms)
+const unsigned long TURN_TIME_LEFT = 600;      // Χρόνος για αριστερή στροφή (ms)
+const unsigned long TURN_TIME_AROUND = 1200;   // Χρόνος για αναστροφή 180° (ms)
+const unsigned long TURN_TIME_RIGHT = 500;     // Χρόνος για δεξιά στροφή (ms)
 
-// GPS accuracy thresholds
-const float GPS_MIN_ACCURACY = 5.0;            // Minimum GPS accuracy (meters)
-const int GPS_MIN_SATELLITES = 4;              // Minimum satellites for good fix
+// Όριο αριθμού δορυφόρων GPS
+const int GPS_MIN_SATELLITES = 4;              // Ελάχιστοι δορυφόροι για καλή λήψη
 
 // ===== VARIABLES =====
 
-// Timing
-unsigned long currentMillis = 0;        // Current time
-unsigned long previousSensorMillis = 0; // Last sensor reading time
-unsigned long previousBatteryMillis = 0; // Last battery reading time
-unsigned long startTime = 0;            // Mission start time
-unsigned long turnStartTime = 0;        // Turn start time
+// Τήρηση Χρονισμού
+unsigned long currentMillis = 0;        // Τρέχων χρόνος
+unsigned long previousSensorMillis = 0; // Χρόνος τελευταίας ανάγνωσης αισθητήρων (εκτός μπαταρίας)
+unsigned long previousBatteryMillis = 0; // Χρόνος τελευταίας μέτρησης αισθητήρα μπαταρίας
+unsigned long startTime = 0;            // Χρόνος έναρξης αποστολής
+unsigned long turnStartTime = 0;        // Χρόνος έναρξης στροφής
 
-// GPS PPS timing
-volatile unsigned long ppsTime = 0;     // Last PPS pulse time
-volatile bool ppsReceived = false;      // PPS pulse received flag
-unsigned long lastTelemetryPPSTime = 0; // Last PPSTime for sending telemetry
-unsigned long lastPPSTime = 0;          // Previous PPS time for interval checking
-bool ppsActive = false;                 // PPS signal is active and valid
+// Χρονισμός GPS PPS
+volatile unsigned long ppsTime = 0;     // Τελευταίος παλμός PPS
+volatile bool ppsReceived = false;      // Flag λήψης PPS παλμού
+unsigned long lastTelemetryPPSTime = 0; // Χρόνος τελευταίας αποστολής τηλεμετρίας
+unsigned long lastPPSTime = 0;          // Τελευταία ένδειξη PPS
+bool ppsActive = false;                 // Flag ενεργοποίησης PPS
 
-// Navigation
-float startLat = 0;               // Starting latitude
-float startLon = 0;               // Starting longitude
-bool missionStarted = false;      // Whether the mission has started
-bool fireDetected = false;        // Whether fire/gas has been detected
+// Πλοήγηση
+float startLat = 0;               // Αρχικό γεωγραφικό πλάτος
+float startLon = 0;               // Αρχικό γεωγραφικό μήκος
+bool missionStarted = false;      // Flag: Αν έχει ξεκινήσει η αποστολή
+bool fireDetected = false;        // Flag: Αν έχει ανιχνευτεί φωτιά/αέριο
 
-// Sensor readings
-int frontDistance = 0;            // Front ultrasonic reading (cm)
-int rightDistance = 0;            // Right ultrasonic reading (cm)
-int leftDistance = 0;             // Left ultrasonic reading (cm)
-int coPPM = 0;                    // CO concentration (ppm)
-int lpgPPM = 0;                   // LPG concentration (ppm)
+// Mεταβλητές αισθητήρων υπερήχων/αερίου/φωτιάς
+int frontDistance = 0;            // (cm)
+int rightDistance = 0;            // (cm)
+int leftDistance = 0;             // (cm)
+int coPPM = 0;                    // Συγκέντρωση CO (ppm)
+int lpgPPM = 0;                   // Συγκέντρωση LPG (ppm)
 
-// Enhanced battery monitoring variables
-float batteryVoltage = 0;         // Battery voltage (V)
-float batteryCurrent = 0;         // Battery current (mA)
-float batteryPower = 0;           // Battery power (mW)
-float consumedCapacity = 0;       // Consumed capacity (mAh)
-float stateOfCharge = 100.0;      // State of charge (%)
-float remainingCapacity = BATTERY_CAPACITY_MAH; // Remaining capacity (mAh)
-unsigned long lastBatteryTime = 0; // Last battery measurement time
-float totalEnergyConsumed = 0;    // Total energy consumed (Wh)
+// Μεταβλητές παρακολούθησης μπαταρίας
+float batteryVoltage = 0;         // (V)
+float batteryCurrent = 0;         // (mA)
+float batteryPower = 0;           // (mW)
+float consumedCapacity = 0;       // Καταναλωθείσα χωρητικότητα (mAh)
+float chargePercentage = 100.0;      // Ποσοστό φόρτισης (%)
+float remainingCapacity = BATTERY_CAPACITY_MAH; // Υπόλοιπη χωρητικότητα (mAh)
+unsigned long lastBatteryTime = 0; // Τελευταίος χρόνος μέτρησης μπαταρίας
+float totalEnergyConsumed = 0;    // Συνολική καταναλωθείσα ενέργεια (Wh)
 
-// State machine variables
+// Μεταβλητές κατάστασης
 enum RobotState {
   INITIALIZING,
   NAVIGATING,
@@ -176,16 +174,16 @@ enum RobotState {
 RobotState currentState = INITIALIZING;
 bool stateChanged = true;
 
-// LiPo discharge curve points (voltage vs SOC)
+// Σημεία καμπύλης εκφόρτισης LiPo (τάση vs SOC)
 struct DischargePoint {
   float voltage;
   float soc;
 };
 
-// 4S LiPo discharge curve (per cell voltage * 4)
+// 4S Καμπύλη εκφόρτισης LiPo (τάση ανά στοιχείο * 4)
 const DischargePoint dischargeCurve[] = {
   {16.80, 100.0}, // 4.2V x 4
-  {16.50, 95.0},  // small drop at top
+  {16.50, 95.0},  // μικρή πτώση στην κορυφή
   {16.20, 90.0},  
   {15.90, 85.0},  
   {15.60, 80.0},  
@@ -196,7 +194,7 @@ const DischargePoint dischargeCurve[] = {
   {14.10, 40.0},  
   {13.80, 25.0},  
   {13.60, 10.0},    
-  {13.20, 0.0}    // 3.3V per cell (cutoff)
+  {13.20, 0.0}    // 3.3V ανά στοιχείο (όριο)
 };
 
 const int DISCHARGE_CURVE_POINTS = sizeof(dischargeCurve) / sizeof(DischargePoint);
@@ -204,14 +202,14 @@ const int DISCHARGE_CURVE_POINTS = sizeof(dischargeCurve) / sizeof(DischargePoin
 // ===== SETUP =====
 
 void setup() {
-  // Initialize serial communication
+  // Εκκίνηση σειριακής επικοινωνίας
   Serial.begin(9600);
-  Serial1.begin(9600); // For GPS module
+  Serial1.begin(9600); // Για το GPS
 
-  // Initialize I2C
+  // Εκκίνηση I2C
   Wire.begin();
   
-  // Initialize pins
+  // Αρχικοποίηση pins
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
@@ -220,31 +218,31 @@ void setup() {
   pinMode(ENB, OUTPUT);
   pinMode(GPS_PPS_PIN, INPUT);
   
-  // Initialize servo
+  // Εκκίνηση σερβοκινητήρα
   steering.attach(SERVO_PIN);
   steerStraight();
   
-  // Initialize INA260 current/voltage/power sensor
+  // Εκκίνηση αισθητήρα INA260
   if (!ina260.init()) {
     Serial.println("INA260 initialization failed!");
     while (1);
   }
   
-  // Configure INA260 for optimal performance
+  // Ρύθμιση INA260 για βέλτιστη απόδοση
   ina260.setMeasureMode(CONTINUOUS);
   ina260.setConversionTime(CONV_TIME_1100);
   ina260.setAverage(AVERAGE_16);
   
   Serial.println("INA260 initialized successfully");
   
-  // Initialize LoRa
+  // Εκκίνηση LoRa
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
   if (!LoRa.begin(433E6)) {
     Serial.println("LoRa initialization failed!");
     while (1);
   }
 
-  // Initialize SD Card
+  // Εκκίνηση κάρτας SD
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("SD init failed!");
     while (1);
@@ -255,35 +253,35 @@ void setup() {
     f.close();
   }
   
-  // Setup GPS PPS interrupt
+  // Ρύθμιση διακοπής PPS GPS
   attachInterrupt(digitalPinToInterrupt(GPS_PPS_PIN), ppsInterrupt, RISING);
   
-  // Record start time for MQ-2 warmup
+  // Καταγραφή χρόνου έναρξης για προθέρμανση MQ-2
   startTime = millis();
   lastBatteryTime = startTime;
   
-  Serial.println("Robot initialized. Warming up MQ-2 sensor...");
-  Serial.println("Enhanced battery management and GPS PPS active");
+  Serial.println("Το ρομπότ εκκινήθηκε. Προθέρμανση αισθητήρα MQ-2...");
+  Serial.println("Ενισχυμένη διαχείριση μπαταρίας και ενεργό GPS PPS");
 }
 
-// ===== GPS PPS INTERRUPT =====
+// ===== ΔΙΑΚΟΠΗ GPS PPS =====
 
 void ppsInterrupt() {
   ppsTime = micros();
   ppsReceived = true;
 }
 
-// ===== MAIN LOOP =====
+// ===== ΚΥΡΙΟΣ ΒΡΟΧΟΣ =====
 
 void loop() {
-  // Update current time
+  // Ενημέρωση τρέχοντος χρόνου
   currentMillis = millis();
   
-  // State machine for initialization
+  // Μηχανή καταστάσεων για αρχικοποίηση
   if (currentState == INITIALIZING) {
-    // Wait for MQ-2 sensor warmup
+    // Αναμονή για προθέρμανση αισθητήρα MQ-2
     if (currentMillis - startTime >= MQ2_WARMUP_TIME) {
-      // Check for GPS fix
+      // Έλεγχος για λήψη GPS
       while (Serial1.available() > 0) {
         if (gps.encode(Serial1.read())) {
           if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
@@ -291,8 +289,8 @@ void loop() {
             startLon = gps.location.lng();
             missionStarted = true;
             saveCurrentWaypoint();
-            Serial.println("GPS fix acquired. Mission starting!");
-            Serial.print("Start position: ");
+            Serial.println("Ελήφθη θέση GPS. Έναρξη αποστολής!");
+            Serial.print("Θέση εκκίνησης: ");
             Serial.print(startLat, 6);
             Serial.print(", ");
             Serial.print(startLon, 6);
@@ -301,112 +299,112 @@ void loop() {
         }
       }
       
-      // If no GPS data received for 5 seconds after warmup, continue anyway
+      // Αν δεν ληφθούν δεδομένα GPS για 5 δευτερόλεπτα μετά την προθέρμανση, συνέχισε ούτως ή άλλως
       if (currentMillis - startTime >= MQ2_WARMUP_TIME + 5000 || missionStarted) {
         if (!missionStarted) {
-          Serial.println("No GPS fix. Starting mission without GPS.");
+          Serial.println("Δεν υπάρχει λήψη GPS. Έναρξη αποστολής χωρίς GPS.");
           missionStarted = true;
         }
         
-        // Initial battery check
+        // Αρχικός έλεγχος μπαταρίας
         readBatteryData();
-        Serial.print("Initial battery: ");
+        Serial.print("Αρχική μπαταρία: ");
         Serial.print(batteryVoltage, 2);
         Serial.print("V, ");
-        Serial.print(stateOfCharge, 1);
+        Serial.print(chargePercentage, 1);
         Serial.println("% SOC");
         
-        // Ready to go
-        Serial.println("Robot initialized and ready!");
+        // Έτοιμο για εκκίνηση
+        Serial.println("Το ρομπότ εκκινήθηκε και είναι έτοιμο!");
         
-        // Transition to navigation state
+        // Μετάβαση σε κατάσταση πλοήγησης
         changeState(NAVIGATING);
       }
     }
   }
   
-  // Read battery data at high frequency for accurate coulomb counting
+  // Ανάγνωση δεδομένων μπαταρίας με υψηλή συχνότητα για ακριβή μέτρηση coulomb
   if (currentMillis - previousBatteryMillis >= BATTERY_INTERVAL) {
     previousBatteryMillis = currentMillis;
     readBatteryData();
     updateBatteryState();
   }
   
-  // Read sensors at regular intervals
+  // Ανάγνωση αισθητήρων σε τακτά διαστήματα
   if (currentMillis - previousSensorMillis >= SENSOR_INTERVAL) {
     previousSensorMillis = currentMillis;
     readSensors();
     
-    // Check for fire/gas
+    // Έλεγχος για φωτιά/αέριο
     checkForFire();
   }
   
-  // Handle navigation based on current state
+  // Διαχείριση πλοήγησης βάσει τρέχουσας κατάστασης
   handleNavigation();
   
-  // Send telemetry at 1Hz
+  // Αποστολή τηλεμετρίας κάθε 1Hz
   if (ppsTime - lastTelemetryPPSTime >= TELEMETRY_INTERVAL) {
     lastTelemetryPPSTime = ppsTime;
     
-    // Update GPS data
+    // Ενημέρωση δεδομένων GPS
     updateGPS();
     
-    // Send telemetry
+    // Αποστολή τηλεμετρίας
     sendTelemetry();
     
-    // Print comprehensive status
+    // Εκτύπωση πλήρους κατάστασης συστήματος
     printSystemStatus();
   }
 }
 
-// ===== BATTERY MANAGEMENT FUNCTIONS =====
+// ===== ΣΥΝΑΡΤΗΣΕΙΣ ΔΙΑΧΕΙΡΙΣΗΣ ΜΠΑΤΑΡΙΑΣ =====
 
 void readBatteryData() {
-  // Read voltage, current, and power from INA260
+  // Ανάγνωση τάσης, ρεύματος και ισχύος από INA260
   batteryVoltage = ina260.getBusVoltage_V();
   batteryCurrent = ina260.getCurrent_mA();
   batteryPower = ina260.getPower_mW();
   
-  // Handle negative current (charging - shouldn't happen in this application)
+  // Διαχείριση αρνητικού ρεύματος (φόρτιση - δεν πρέπει να συμβαίνει σε αυτή την εφαρμογή)
   if (batteryCurrent < 0) {
     batteryCurrent = 0;
   }
 }
 
 void updateBatteryState() {
-  // Calculate time delta for coulomb counting
+  // Υπολογισμός διαφοράς χρόνου για μέτρηση coulomb
   unsigned long currentTime = millis();
-  float deltaTimeHours = (currentTime - lastBatteryTime) / 3600000.0; // Convert ms to hours
+  float deltaTimeHours = (currentTime - lastBatteryTime) / 3600000.0; // Μετατροπή ms σε ώρες
   lastBatteryTime = currentTime;
   
-  // Coulomb counting: integrate current over time
+  // Μέτρηση coulomb: ολοκλήρωση ρεύματος ως προς το χρόνο
   float consumedThisCycle = batteryCurrent * deltaTimeHours; // mAh
   consumedCapacity += consumedThisCycle;
   
-  // Update remaining capacity
+  // Ενημέρωση υπόλοιπης χωρητικότητας
   remainingCapacity = BATTERY_CAPACITY_MAH - consumedCapacity;
   if (remainingCapacity < 0) remainingCapacity = 0;
   
-  // Calculate SOC using combined voltage and coulomb counting
+  // Υπολογισμός SOC με συνδυασμό τάσης και coulomb counting
   float voltageSoc = calculateVoltageBasedSOC(batteryVoltage);
   float coulombSoc = (remainingCapacity / BATTERY_CAPACITY_MAH) * 100.0;
   
-  // Weighted combination (favor coulomb counting when available)
-  if (consumedCapacity > 10) { // After some consumption, trust coulomb counting more
-    stateOfCharge = (coulombSoc * 0.8) + (voltageSoc * 0.2);
+  // Συνδυασμός με βάρη (προτίμηση coulomb counting όταν υπάρχουν δεδομένα)
+  if (consumedCapacity > 10) { // Μετά από κάποια κατανάλωση, εμπιστεύσου περισσότερο το coulomb counting
+    chargePercentage = (coulombSoc * 0.8) + (voltageSoc * 0.2);
   } else {
-    stateOfCharge = (coulombSoc * 0.3) + (voltageSoc * 0.7);
+    chargePercentage = (coulombSoc * 0.3) + (voltageSoc * 0.7);
   }
   
-  // Constrain SOC to valid range
-  stateOfCharge = constrain(stateOfCharge, 0, 100);
+  // Περιορισμός SOC σε έγκυρο εύρος
+  chargePercentage = constrain(chargePercentage, 0, 100);
   
-  // Update total energy consumed
-  totalEnergyConsumed += (batteryPower * deltaTimeHours) / 1000.0; // Convert mWh to Wh
+  // Ενημέρωση συνολικής καταναλωθείσας ενέργειας
+  totalEnergyConsumed += (batteryPower * deltaTimeHours) / 1000.0; // Μετατροπή mWh σε Wh
 }
 
 float calculateVoltageBasedSOC(float voltage) {
-  // Interpolate SOC from discharge curve
+  // Παρεμβολή SOC από την καμπύλη εκφόρτισης
   if (voltage >= dischargeCurve[0].voltage) {
     return 100.0;
   }
@@ -414,10 +412,10 @@ float calculateVoltageBasedSOC(float voltage) {
     return 0.0;
   }
   
-  // Find the two points to interpolate between
+  // Βρες τα δύο σημεία για παρεμβολή
   for (int i = 0; i < DISCHARGE_CURVE_POINTS - 1; i++) {
     if (voltage <= dischargeCurve[i].voltage && voltage >= dischargeCurve[i + 1].voltage) {
-      // Linear interpolation
+      // Γραμμική παρεμβολή
       // Βρες σε ποιο εύρος τάσης του πίνακα είναι η μέτρηση
       float voltageRange = dischargeCurve[i].voltage - dischargeCurve[i + 1].voltage;
       // Βρες το εύρος του ποσοστού του πίνακα είναι η μέτρηση
@@ -429,36 +427,36 @@ float calculateVoltageBasedSOC(float voltage) {
     }
   }
   
-  return 50.0; // Fallback
+  return 50.0; // Επιστροφή προεπιλογής
 }
 
 float estimateRemainingTime() {
-  // Estimate remaining time based on current consumption
+  // Εκτίμηση υπολειπόμενου χρόνου βάσει τρέχουσας κατανάλωσης
   if (batteryCurrent <= 0) {
-    return 999.0; // Infinite time if no consumption
+    return 999.0; // Άπειρος χρόνος αν δεν υπάρχει κατανάλωση
   }
   
-  // Calculate remaining time in hours
+  // Υπολογισμός υπολειπόμενου χρόνου σε ώρες
   float remainingTimeHours = remainingCapacity / batteryCurrent;
   
-  // Convert to minutes
+  // Μετατροπή σε λεπτά
   return remainingTimeHours * 60.0;
 }
 
-// ===== STATE MANAGEMENT =====
+// ===== ΔΙΑΧΕΙΡΙΣΗ ΚΑΤΑΣΤΑΣΕΩΝ =====
 
 void changeState(RobotState newState) {
   if (currentState != newState) {
     currentState = newState;
     stateChanged = true;
     
-    // Record start time for timed states
+    // Καταγραφή χρόνου έναρξης για καταστάσεις με χρονισμό
     if (newState == TURNING_LEFT || newState == TURNING_RIGHT || newState == TURNING_AROUND) {
       turnStartTime = currentMillis;
     }
     
-    // Debug output
-    Serial.print("State changed to: ");
+    // Έξοδος αποσφαλμάτωσης
+    Serial.print("Η κατάσταση άλλαξε σε: ");
     switch (newState) {
       case INITIALIZING: Serial.println("INITIALIZING"); break;
       case NAVIGATING: Serial.println("NAVIGATING"); break;
@@ -470,7 +468,7 @@ void changeState(RobotState newState) {
   }
 }
 
-// ===== NAVIGATION FUNCTIONS =====
+// ===== ΣΥΝΑΡΤΗΣΕΙΣ ΠΛΟΗΓΗΣΗΣ =====
 
 void handleNavigation() {
   switch (currentState) {
@@ -606,33 +604,33 @@ void followWall(int rightDist, int speed) {
 // ===== SENSOR FUNCTIONS =====
 
 void readSensors() {
-  // Read ultrasonic sensors
+  // Ανάγνωση αισθητήρων υπερήχων
   frontDistance = sonarFront.ping_cm();
   rightDistance = sonarRight.ping_cm();
   leftDistance = sonarLeft.ping_cm();
   
-  // If distance is 0 (out of range), set to maximum
+  // Αν η απόσταση είναι 0 (εκτός εμβέλειας), θέσε στη μέγιστη τιμή
   if (frontDistance == 0) frontDistance = MAX_DISTANCE;
   if (rightDistance == 0) rightDistance = MAX_DISTANCE;
   if (leftDistance == 0) leftDistance = MAX_DISTANCE;
   
-  // Read MQ-2 sensor
+  // Ανάγνωση αισθητήρα MQ-2
   readMQ2(coPPM, lpgPPM);
 }
 
 void readMQ2(int &co_ppm, int &lpg_ppm) {
-  // Read MQ-2 sensor
+  // Ανάγνωση αισθητήρα MQ-2
   int mq2_raw = analogRead(MQ2_PIN);
   
-  // Convert raw reading to ppm (simplified approach)
-  // In a real implementation, you would use the sensor's datasheet
-  // to create a more accurate conversion function
+  // Μετατροπή ακατέργαστης τιμής σε ppm (απλοποιημένη προσέγγιση)
+  // Σε πραγματική υλοποίηση, θα χρησιμοποιούσες το datasheet του αισθητήρα
+  // για πιο ακριβή μετατροπή
   co_ppm = map(mq2_raw, 0, 1023, 0, 1000);
   lpg_ppm = map(mq2_raw, 0, 1023, 0, 5000);
 }
 
 void updateGPS() {
-  // Read GPS data
+  // Ανάγνωση δεδομένων GPS
   while (Serial1.available() > 0) {
     if (gps.encode(Serial1.read())) {
       if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
@@ -642,42 +640,42 @@ void updateGPS() {
     }
   }
   
-  // Handle PPS synchronization and verification
+  // Διαχείριση συγχρονισμού και επαλήθευσης PPS
   if (ppsReceived) {
     ppsReceived = false;
     
-    // Verify PPS timing accuracy
+    // Επαλήθευση ακρίβειας χρονισμού PPS
     if (lastPPSTime > 0) {
       unsigned long ppsInterval = ppsTime - lastPPSTime;
-      // PPS should be exactly 1 second (1,000,000 microseconds)
-      if (abs((long)(ppsInterval - 1000000)) < 1000) {  // Within 1ms tolerance
+      // Το PPS πρέπει να είναι ακριβώς 1 δευτερόλεπτο (1.000.000 μικροδευτερόλεπτα)
+      if (abs((long)(ppsInterval - 1000000)) < 1000) {  // Εντός ανοχής 1ms
         ppsActive = true;
-        Serial.println("PPS: Accurate 1Hz signal detected");
+        Serial.println("PPS: Εντοπίστηκε ακριβές σήμα 1Hz");
       } else {
-        Serial.print("PPS: Timing error - interval: ");
+        Serial.print("PPS: Σφάλμα χρονισμού - διάστημα: ");
         Serial.print(ppsInterval);
-        Serial.println(" μs (expected: 1,000,000 μs)");
+        Serial.println(" μs (αναμενόμενο: 1.000.000 μs)");
       }
     }
     lastPPSTime = ppsTime;
     
-    // Use PPS for precise GPS data synchronization
+    // Χρήση PPS για ακριβή συγχρονισμό δεδομένων GPS
     if (gps.location.isValid() && ppsActive) {
-      // GPS data is now synchronized to microsecond precision
-      Serial.print("PPS-synchronized GPS at: ");
+      // Τα δεδομένα GPS είναι πλέον συγχρονισμένα σε ακρίβεια μικροδευτερολέπτου
+      Serial.print("PPS-συγχρονισμένο GPS στο: ");
       Serial.print(ppsTime);
       Serial.println(" μs");
     }
   }
   
-  // Check for PPS timeout (no signal for >2 seconds)
+  // Έλεγχος για timeout PPS (καμία λήψη για >2 δευτερόλεπτα)
   if (ppsActive && (micros() - ppsTime) > 2000000) {
     ppsActive = false;
-    Serial.println("WARNING: PPS signal lost");
+    Serial.println("ΠΡΟΕΙΔΟΠΟΙΗΣΗ: Απώλεια σήματος PPS");
   }
 }
 
-// ===== MOTOR CONTROL FUNCTIONS =====
+// ===== ΣΥΝΑΡΤΗΣΕΙΣ ΕΛΕΓΧΟΥ ΚΙΝΗΤΗΡΩΝ =====
 
 void moveForward(int speed) {
   // Εμπρός κίνηση με καθορισμένη ταχύτητα
@@ -710,14 +708,14 @@ void steerRight() {
   steering.write(SERVO_RIGHT);
 }
 
-// ===== FIRE DETECTION AND TELEMETRY =====
+// ===== ΑΝΙΧΝΕΥΣΗ ΦΩΤΙΑΣ ΚΑΙ ΤΗΛΕΜΕΤΡΙΑ =====
 
 void checkForFire() {
   // Έλεγχος αν έχει ανιχνευτεί φωτιά ή αέριο
   if (coPPM > CO_THRESHOLD || lpgPPM > LPG_THRESHOLD) {
     
     if (!fireDetected) {
-      // Αποστολή ΕΝΟΣ επείγοντος μηνύματος τηλεμετρίας όταν ανίχνευτεί φωτιά / αερίο μέχρι να πέσουν οι τιμές 
+      // Αποστολή ΕΝΟΣ επείγοντος μηνύματος τηλεμετρίας όταν ανιχνευτεί φωτιά / αερίο μέχρι να πέσουν οι τιμές 
       fireDetected = true;
       Serial.println("ALERT: Fire/Gas detected!");
       
@@ -730,38 +728,38 @@ void checkForFire() {
 }
 
 void sendTelemetry() {
-  // Telemetry format: lat, lon, LPG_ppm, CO_ppm, batt_voltage, 
+  // Μορφή τηλεμετρίας: lat, lon, LPG_ppm, CO_ppm, batt_voltage, 
   // soc_percent, remaining_minutes
   String telemetryData = formatTelemetryData();
   
-  // Send via LoRa
+  // Αποστολή μέσω LoRa
   LoRa.beginPacket();
-  LoRa.print("Telemetry: ")
+  LoRa.print("Telemetry: ");
   LoRa.print(telemetryData);
   LoRa.endPacket();
   
-  // Debug output
-  Serial.print("Telemetry sent: ");
+  // Έξοδος αποσφαλμάτωσης
+  Serial.print("Απεστάλη τηλεμετρία: ");
   Serial.println(telemetryData);
 }
 
 void sendEmergencyTelemetry() {
-  // Send emergency telemetry with current position and gas readings
+  // Αποστολή επείγουσας τηλεμετρίας με τρέχουσα θέση και μετρήσεις αερίου
   String emergencyData = formatTelemetryData();
   
-  // Send via LoRa with higher power/priority
+  // Αποστολή μέσω LoRa με υψηλότερη προτεραιότητα
   LoRa.beginPacket();
   LoRa.print("EMERGENCY: ");
   LoRa.print(emergencyData);
   LoRa.endPacket();
   
-  // Debug output
-  Serial.print("EMERGENCY TELEMETRY: ");
+  // Έξοδος αποσφαλμάτωσης
+  Serial.print("ΕΠΕΙΓΟΥΣΑ ΤΗΛΕΜΕΤΡΙΑ: ");
   Serial.println(emergencyData);
 }
 
 String formatTelemetryData() {
-  // Telemetry data format
+  // Μορφή δεδομένων τηλεμετρίας
   String data = "";
   
   if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
@@ -774,7 +772,7 @@ String formatTelemetryData() {
   data += String(lpgPPM) + ",";
   data += String(coPPM) + ",";
   data += String(batteryVoltage, 2) + ",";
-  data += String(stateOfCharge, 1) + ",";
+  data += String(chargePercentage, 1) + ",";
   data += String(estimateRemainingTime(), 1) + ",";
   
   return data;
@@ -793,59 +791,59 @@ void saveCurrentWaypoint() {
   }
 }
 
-// ===== STATUS AND MONITORING =====
+// ===== ΚΑΤΑΣΤΑΣΗ ΚΑΙ ΠΑΡΑΚΟΛΟΥΘΗΣΗ =====
 
 void printSystemStatus() {
-  // Print comprehensive system status
-  unsigned long missionTime = (currentMillis - startTime) / 1000; // seconds
+  // Εκτύπωση πλήρους κατάστασης συστήματος
+  unsigned long missionTime = (currentMillis - startTime) / 1000; // δευτερόλεπτα
   
-  Serial.println("=== SYSTEM STATUS ===");
-  Serial.print("Mission time: ");
-  Serial.print(missionTime / 60); // minutes
+  Serial.println("=== ΚΑΤΑΣΤΑΣΗ ΣΥΣΤΗΜΑΤΟΣ ===");
+  Serial.print("Χρόνος αποστολής: ");
+  Serial.print(missionTime / 60); // λεπτά
   Serial.print(":");
-  Serial.print(missionTime % 60); // seconds
+  Serial.print(missionTime % 60); // δευτερόλεπτα
   Serial.println();
   
-  // Battery status
-  Serial.print("Battery: ");
+  // Κατάσταση μπαταρίας
+  Serial.print("Μπαταρία: ");
   Serial.print(batteryVoltage, 2);
   Serial.print("V, ");
   Serial.print(batteryCurrent, 1);
   Serial.print("mA, ");
   Serial.print(batteryPower, 1);
   Serial.print("mW, SOC: ");
-  Serial.print(stateOfCharge, 1);
-  Serial.print("%, Remaining: ");
+  Serial.print(chargePercentage, 1);
+  Serial.print("%, Υπόλοιπο: ");
   Serial.print(estimateRemainingTime(), 0);
   Serial.println(" min");
   
-  // GPS status
+  // Κατάσταση GPS
   if (gps.location.isValid()) {
     Serial.print("GPS: ");
     Serial.print(gps.location.lat(), 6);
     Serial.print(", ");
     Serial.print(gps.location.lng(), 6);
   } else {
-    Serial.println("GPS: No fix");
+    Serial.println("GPS: Χωρίς λήψη");
   }
   
-  // Sensor status
-  Serial.print("Distances - Front: ");
+  // Κατάσταση αισθητήρων
+  Serial.print("Αποστάσεις - Μπροστά: ");
   Serial.print(frontDistance);
-  Serial.print("cm, Right: ");
+  Serial.print("cm, Δεξιά: ");
   Serial.print(rightDistance);
-  Serial.print("cm, Left: ");
+  Serial.print("cm, Αριστερά: ");
   Serial.print(leftDistance);
   Serial.println("cm");
   
-  Serial.print("Gas - CO: ");
+  Serial.print("Αέρια - CO: ");
   Serial.print(coPPM);
   Serial.print("ppm, LPG: ");
   Serial.print(lpgPPM);
   Serial.println("ppm");
   
-  // Energy consumption
-  Serial.print("Total energy consumed: ");
+  // Κατανάλωση ενέργειας
+  Serial.print("Συνολική καταναλωθείσα ενέργεια: ");
   Serial.print(totalEnergyConsumed, 2);
   Serial.println(" Wh");
   
