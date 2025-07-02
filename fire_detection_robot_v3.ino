@@ -5,7 +5,7 @@
  * - INA260 current/voltage/power monitoring for accurate coulomb counting
  * - GPS PPS integration for enhanced positioning accuracy
  * - Advanced battery management with non-linear LiPo modeling
- * - Enhanced telemetry with comprehensive power and GPS metrics
+ * - Telemetry with comprehensive power and GPS metrics
  * - Non-blocking timing techniques for improved responsiveness
  * 
  * Hardware:
@@ -31,8 +31,8 @@
 // ===== PIN DEFINITIONS =====
 
 // --- SD Card Pins (Optimized for close physical grouping) ---
-#define SD_CS_PIN 53    // Close to SPI pins for better connections
 // Note: SD card uses hardware SPI pins on Mega
+#define SD_CS_PIN 53    // Close to SPI pins for better connections
 #define SD_MOSI 51      // Hardware SPI MOSI
 #define SD_MISO 50      // Hardware SPI MISO  
 #define SD_SCK 52       // Hardware SPI SCK
@@ -113,7 +113,7 @@ const int SERVO_RIGHT = 60;       // Right turn position
 
 // Timing constants
 const unsigned long SENSOR_INTERVAL = 50;      // Sensor reading interval (ms)
-const unsigned long TELEMETRY_INTERVAL = 1000; // Telemetry interval (ms)
+const unsigned long TELEMETRY_INTERVAL = 1000000; // Telemetry interval (μs)
 const unsigned long BATTERY_INTERVAL = 100;    // Battery monitoring interval (ms)
 const unsigned long MQ2_WARMUP_TIME = 20000;   // MQ-2 warmup time (ms)
 const unsigned long TURN_TIME_LEFT = 600;      // Time for left turn (ms)
@@ -129,7 +129,6 @@ const int GPS_MIN_SATELLITES = 4;              // Minimum satellites for good fi
 // Timing
 unsigned long currentMillis = 0;        // Current time
 unsigned long previousSensorMillis = 0; // Last sensor reading time
-unsigned long previousTelemetryMillis = 0; // Last telemetry time
 unsigned long previousBatteryMillis = 0; // Last battery reading time
 unsigned long startTime = 0;            // Mission start time
 unsigned long turnStartTime = 0;        // Turn start time
@@ -137,7 +136,7 @@ unsigned long turnStartTime = 0;        // Turn start time
 // GPS PPS timing
 volatile unsigned long ppsTime = 0;     // Last PPS pulse time
 volatile bool ppsReceived = false;      // PPS pulse received flag
-unsigned long lastValidGPSTime = 0;     // Last valid GPS reading time
+unsigned long lastTelemetryPPSTime = 0; // Last PPSTime for sending telemetry
 unsigned long lastPPSTime = 0;          // Previous PPS time for interval checking
 bool ppsActive = false;                 // PPS signal is active and valid
 
@@ -164,12 +163,6 @@ float remainingCapacity = BATTERY_CAPACITY_MAH; // Remaining capacity (mAh)
 unsigned long lastBatteryTime = 0; // Last battery measurement time
 float totalEnergyConsumed = 0;    // Total energy consumed (Wh)
 
-// GPS enhanced variables
-float gpsAccuracy = 999.0;        // GPS horizontal accuracy (meters)
-int satelliteCount = 0;           // Number of satellites
-float gpsSpeed = 0;               // GPS speed (km/h)
-float gpsCourse = 0;              // GPS course (degrees)
-
 // State machine variables
 enum RobotState {
   INITIALIZING,
@@ -191,16 +184,19 @@ struct DischargePoint {
 
 // 4S LiPo discharge curve (per cell voltage * 4)
 const DischargePoint dischargeCurve[] = {
-  {16.8, 100.0}, // 4.2V per cell
-  {16.4, 95.0},  // 4.1V per cell
-  {16.0, 85.0},  // 4.0V per cell
-  {15.6, 75.0},  // 3.9V per cell
-  {15.2, 60.0},  // 3.8V per cell
-  {14.8, 40.0},  // 3.7V per cell
-  {14.4, 25.0},  // 3.6V per cell
-  {14.0, 10.0},  // 3.5V per cell
-  {13.6, 5.0},   // 3.4V per cell
-  {13.2, 0.0}    // 3.3V per cell (minimum safe)
+  {16.80, 100.0}, // 4.2V x 4
+  {16.50, 95.0},  // small drop at top
+  {16.20, 90.0},  
+  {15.90, 85.0},  
+  {15.60, 80.0},  
+  {15.30, 75.0},  
+  {15.00, 70.0},  
+  {14.70, 65.0},  
+  {14.40, 55.0},  
+  {14.10, 40.0},  
+  {13.80, 25.0},  
+  {13.60, 10.0},    
+  {13.20, 0.0}    // 3.3V per cell (cutoff)
 };
 
 const int DISCHARGE_CURVE_POINTS = sizeof(dischargeCurve) / sizeof(DischargePoint);
@@ -293,7 +289,6 @@ void loop() {
           if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
             startLat = gps.location.lat();
             startLon = gps.location.lng();
-            satelliteCount = gps.satellites.value();
             missionStarted = true;
             saveCurrentWaypoint();
             Serial.println("GPS fix acquired. Mission starting!");
@@ -301,8 +296,6 @@ void loop() {
             Serial.print(startLat, 6);
             Serial.print(", ");
             Serial.print(startLon, 6);
-            Serial.print(", Satellites: ");
-            Serial.println(satelliteCount);
             break;
           }
         }
@@ -352,14 +345,14 @@ void loop() {
   handleNavigation();
   
   // Send telemetry at 1Hz
-  if (currentMillis - previousTelemetryMillis >= TELEMETRY_INTERVAL) {
-    previousTelemetryMillis = currentMillis;
+  if (ppsTime - lastTelemetryPPSTime >= TELEMETRY_INTERVAL) {
+    lastTelemetryPPSTime = ppsTime;
     
     // Update GPS data
     updateGPS();
     
-    // Send enhanced telemetry
-    sendEnhancedTelemetry();
+    // Send telemetry
+    sendTelemetry();
     
     // Print comprehensive status
     printSystemStatus();
@@ -425,10 +418,13 @@ float calculateVoltageBasedSOC(float voltage) {
   for (int i = 0; i < DISCHARGE_CURVE_POINTS - 1; i++) {
     if (voltage <= dischargeCurve[i].voltage && voltage >= dischargeCurve[i + 1].voltage) {
       // Linear interpolation
+      // Βρες σε ποιο εύρος τάσης του πίνακα είναι η μέτρηση
       float voltageRange = dischargeCurve[i].voltage - dischargeCurve[i + 1].voltage;
+      // Βρες το εύρος του ποσοστού του πίνακα είναι η μέτρηση
       float socRange = dischargeCurve[i].soc - dischargeCurve[i + 1].soc;
+      // Υπολόγισε την διαφορά της μέτρησης από την αμέσως μεγαλύτερη τιμή τάσης του πίνακα
       float voltageOffset = dischargeCurve[i].voltage - voltage;
-      
+      // Επέστρεψε το υπολογιζόμενο ποσοστό χωρητικότητας που απομένει
       return dischargeCurve[i].soc - (voltageOffset / voltageRange) * socRange;
     }
   }
@@ -509,19 +505,23 @@ void handleNavigation() {
       break;
       
     case TURNING_LEFT:
-      // Execute a left turn (non-blocking)
+      // Εκτέλεση αριστερής στροφής με υποβοήθηση αριστερής περιστροφής
       if (stateChanged) {
+        // Στρίβει τις εμπρός ρόδες πρώτα αριστερά 
         steerLeft();
-        analogWrite(ENA, 150);
-        analogWrite(ENB, 150);
+        // Κάνει αριστερή περιστροφή με τις πίσω ρόδες για να βοηθήσει την κίνηση
+        analogWrite(ENA, 100); // Ο αριστερός τροχός περιστρέφεται με μικροτερη ταχύτητα λόγω μικρού τόξου
+        analogWrite(ENB, 180); // Ο δεξιός τροχός περιστρέφεται με μεγαλύτερη ταχύτητα λόγω μεγάλου τόξου
+        // Ο αριστερός τροχός περιστέφεται αντίθετα προς την κίνηση
         digitalWrite(IN1, LOW);
         digitalWrite(IN2, HIGH);
+        // Ο δεξιός τροχός περιστέφεται προς την κίνηση
         digitalWrite(IN3, HIGH);
         digitalWrite(IN4, LOW);
         stateChanged = false;
       }
       
-      // Check if turn is complete
+      // Έλεγχος αν η αριστερή κίνηση έχει ολοκληρωθεί
       if (currentMillis - turnStartTime >= TURN_TIME_LEFT) {
         stopMotors();
         steerStraight();
@@ -530,19 +530,23 @@ void handleNavigation() {
       break;
       
     case TURNING_RIGHT:
-      // Execute a right turn (non-blocking)
+      // Εκτέλεση δεξιάς στροφής με υποβοήθηση δεξιάς περιστροφής
       if (stateChanged) {
+        // Στρίβει τις εμπρός ρόδες πρώτα δεξιά 
         steerRight();
-        analogWrite(ENA, 150);
-        analogWrite(ENB, 150);
+        // Κάνει δεξιά περιστροφή με τις πίσω ρόδες για να βοηθήσει την κίνηση
+        analogWrite(ENA, 180); // Ο αριστερός τροχός περιστρέφεται με μεγαλύτερη ταχύτητα λόγω μεγάλου τόξου
+        analogWrite(ENB, 100); // Ο δεξιός τροχός περιστρέφεται με μικροτερη ταχύτητα λόγω μικρού τόξου
+        // Ο αριστερός τροχός περιστέφεται προς την κίνηση
         digitalWrite(IN1, HIGH);
         digitalWrite(IN2, LOW);
+        // Ο δεξιός τροχός περιστέφεται αντίθετα προς την κίνηση
         digitalWrite(IN3, HIGH);
         digitalWrite(IN4, LOW);
         stateChanged = false;
       }
       
-      // Check if turn is complete
+      // Έλεγχος αν η δεξιά κίνηση έχει ολοκληρωθεί
       if (currentMillis - turnStartTime >= TURN_TIME_RIGHT) {
         steerStraight();
         changeState(NAVIGATING);
@@ -550,19 +554,22 @@ void handleNavigation() {
       break;
       
     case TURNING_AROUND:
-      // Execute a 180-degree turn (non-blocking)
+      // Εκτέλεση αριστερής αναστροφής
       if (stateChanged) {
         steerLeft();
+        // Κάνει αριστερή περιστροφή με τις πίσω ρόδες με την ίδια ταχύτητα αλλά αντίθετη φορά
         analogWrite(ENA, 200);
         analogWrite(ENB, 200);
+        // Ο αριστερός τροχός περιστέφεται αντίθετα προς την κίνηση
         digitalWrite(IN1, LOW);
         digitalWrite(IN2, HIGH);
+        // Ο δεξιός τροχός περιστέφεται προς την κίνηση
         digitalWrite(IN3, HIGH);
         digitalWrite(IN4, LOW);
         stateChanged = false;
       }
       
-      // Check if turn is complete
+      // Έλεγχος αν η αναστροφή έχει ολοκληρωθεί
       if (currentMillis - turnStartTime >= TURN_TIME_AROUND) {
         stopMotors();
         steerStraight();
@@ -571,7 +578,7 @@ void handleNavigation() {
       break;
       
     case STOPPED:
-      // Robot is stopped
+      // Το robot έχει σταματήσει να κινείται
       stopMotors();
       break;
   }
@@ -628,23 +635,8 @@ void updateGPS() {
   // Read GPS data
   while (Serial1.available() > 0) {
     if (gps.encode(Serial1.read())) {
-      if (gps.location.isValid()) {
-        lastValidGPSTime = currentMillis;
-        satelliteCount = gps.satellites.value();
-        
-        // Calculate GPS accuracy (HDOP-based estimation)
-        if (gps.hdop.isValid()) {
-          gpsAccuracy = gps.hdop.hdop() * 5.0; // Rough conversion to meters
-        }
-        
-        // Get speed and course if available
-        if (gps.speed.isValid()) {
-          gpsSpeed = gps.speed.kmph();
-        }
-        if (gps.course.isValid()) {
-          gpsCourse = gps.course.deg();
-        }
-        
+      if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
+
         saveCurrentWaypoint();
       }
     }
@@ -688,7 +680,7 @@ void updateGPS() {
 // ===== MOTOR CONTROL FUNCTIONS =====
 
 void moveForward(int speed) {
-  // Move forward at specified speed
+  // Εμπρός κίνηση με καθορισμένη ταχύτητα
   analogWrite(ENA, speed);
   analogWrite(ENB, speed);
   digitalWrite(IN1, HIGH);
@@ -698,64 +690,64 @@ void moveForward(int speed) {
 }
 
 void stopMotors() {
-  // Stop all motors
+  // Σταμάτάει η κίνηση των dc motor
   analogWrite(ENA, 0);
   analogWrite(ENB, 0);
 }
 
 void steerStraight() {
-  // Set servo to center position
+  // Οι εμπρός ρόδες είναι ευθεία
   steering.write(SERVO_CENTER);
 }
 
 void steerLeft() {
-  // Set servo to left position
+  // Οι εμπρός ρόδες είναι αριστερά
   steering.write(SERVO_LEFT);
 }
 
 void steerRight() {
-  // Set servo to right position
+  // Οι εμπρός ρόδες είναι δεξιά
   steering.write(SERVO_RIGHT);
 }
 
 // ===== FIRE DETECTION AND TELEMETRY =====
 
 void checkForFire() {
-  // Check if fire/gas is detected
+  // Έλεγχος αν έχει ανιχνευτεί φωτιά ή αέριο
   if (coPPM > CO_THRESHOLD || lpgPPM > LPG_THRESHOLD) {
-    // Fire/gas detected
+    
     if (!fireDetected) {
-      // First detection
+      // Αποστολή ΕΝΟΣ επείγοντος μηνύματος τηλεμετρίας όταν ανίχνευτεί φωτιά / αερίο μέχρι να πέσουν οι τιμές 
       fireDetected = true;
       Serial.println("ALERT: Fire/Gas detected!");
       
-      // Send emergency telemetry
       sendEmergencyTelemetry();
     }
   } else {
-    // Reset detection flag if levels drop
+    // Επαναφορά flag ανιχνευσης φωτιάς / αερίου όταν πέσουν οι τιμές κάτω από τα καθορισμένα όρια
     fireDetected = false;
   }
 }
 
-void sendEnhancedTelemetry() {
-  // Enhanced telemetry format: lat, lon, LPG_ppm, CO_ppm, batt_voltage, 
-  // current_mA, power_mW, soc_percent, remaining_minutes, gps_accuracy, satellite_count
-  String telemetryData = formatEnhancedTelemetryData();
+void sendTelemetry() {
+  // Telemetry format: lat, lon, LPG_ppm, CO_ppm, batt_voltage, 
+  // soc_percent, remaining_minutes
+  String telemetryData = formatTelemetryData();
   
   // Send via LoRa
   LoRa.beginPacket();
+  LoRa.print("Telemetry: ")
   LoRa.print(telemetryData);
   LoRa.endPacket();
   
   // Debug output
-  Serial.print("Enhanced telemetry sent: ");
+  Serial.print("Telemetry sent: ");
   Serial.println(telemetryData);
 }
 
 void sendEmergencyTelemetry() {
   // Send emergency telemetry with current position and gas readings
-  String emergencyData = formatEnhancedTelemetryData();
+  String emergencyData = formatTelemetryData();
   
   // Send via LoRa with higher power/priority
   LoRa.beginPacket();
@@ -768,11 +760,11 @@ void sendEmergencyTelemetry() {
   Serial.println(emergencyData);
 }
 
-String formatEnhancedTelemetryData() {
-  // Enhanced telemetry data format
+String formatTelemetryData() {
+  // Telemetry data format
   String data = "";
   
-  if (gps.location.isValid()) {
+  if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
     data += String(gps.location.lat(), 6) + ",";
     data += String(gps.location.lng(), 6) + ",";
   } else {
@@ -782,38 +774,22 @@ String formatEnhancedTelemetryData() {
   data += String(lpgPPM) + ",";
   data += String(coPPM) + ",";
   data += String(batteryVoltage, 2) + ",";
-  data += String(batteryCurrent, 1) + ",";
-  data += String(batteryPower, 1) + ",";
   data += String(stateOfCharge, 1) + ",";
   data += String(estimateRemainingTime(), 1) + ",";
-  data += String(gpsAccuracy, 1) + ",";
-  data += String(satelliteCount);
   
   return data;
 }
 
+
 void saveCurrentWaypoint() {
-  if (gps.location.isValid()) {
-    double lat = gps.location.lat();
-    double lon = gps.location.lng();
-    
-    File f = SD.open("route.csv", FILE_WRITE);
-    if (f) {
-      // Use PPS time for precise timestamps when available
-      if (ppsTime > 0) {
-        f.print(ppsTime); f.print(',');  // Microsecond-precise timestamp
-      } else {
-        f.print(currentMillis * 1000); f.print(',');  // Fallback to millisecond timestamp
-      }
-      f.print(lat, 6); f.print(',');
-      f.print(lon, 6); f.print(',');
-      f.print(batteryVoltage, 2); f.print(',');
-      f.print(batteryCurrent, 1); f.print(',');
-      f.print(batteryPower, 1); f.print(',');
-      f.print(stateOfCharge, 1); f.print(',');
-      f.println(satelliteCount);
-      f.close();
-    }
+  double lat = gps.location.lat();
+  double lon = gps.location.lng();
+  
+  File f = SD.open("route.csv", FILE_WRITE);
+  if (f) {
+    f.print(lat, 6); f.print(',');
+    f.print(lon, 6); f.print(',');
+    f.close();
   }
 }
 
@@ -849,10 +825,6 @@ void printSystemStatus() {
     Serial.print(gps.location.lat(), 6);
     Serial.print(", ");
     Serial.print(gps.location.lng(), 6);
-    Serial.print(", Accuracy: ");
-    Serial.print(gpsAccuracy, 1);
-    Serial.print("m, Satellites: ");
-    Serial.println(satelliteCount);
   } else {
     Serial.println("GPS: No fix");
   }
