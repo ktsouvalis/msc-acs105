@@ -62,14 +62,17 @@
 #define GPS_PPS_PIN 2   // Interrupt Pin PPS του GPS
 
 // Μονάδα LoRa (SX1278)
+#define LORA_RST 39     // Reset pin
+#define LORA_DIO0 41    // DIO0 pin
+#define LORA_SCK 43     // SCK pin
+#define LORA_MIS0 45    // MISO pin 
+#define LORA_M0SI 47    // MOSI pin
 #define LORA_SS 49      // NSS pin 
-#define LORA_RST 48     // Reset pin
-#define LORA_DIO0 47    // DIO0 pin
 
 // Διευθύνσεις I2C
 #define INA260_ADDRESS 0x40  // Διεύθυνση I2C του INA260
 
-// MQ-2 Sensor Constants
+// Αισθητήρας MQ-2
 #define BOARD "Arduino MEGA"
 #define VOLTAGE_RESOLUTION 5
 #define ADC_BIT_RESOLUTION 10
