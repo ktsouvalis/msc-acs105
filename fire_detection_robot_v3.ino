@@ -26,6 +26,7 @@
 #include <SD.h>              // Καταγραφή σε κάρτα SD
 #include <Wire.h>            // Επικοινωνία I2C
 #include <INA260_WE.h>       // Αισθητήρας INA260 ρεύματος/τάσης/ισχύος
+#include <MQUnifiedsensor.h> // Αισθητήρας MQ-2 για ανίχνευση αερίων
 
 // ===== PIN DEFINITIONS =====
 
@@ -68,6 +69,12 @@
 // Διευθύνσεις I2C
 #define INA260_ADDRESS 0x40  // Διεύθυνση I2C του INA260
 
+// MQ-2 Sensor Constants
+#define BOARD "Arduino MEGA"
+#define VOLTAGE_RESOLUTION 5
+#define ADC_BIT_RESOLUTION 10
+#define TYPE "MQ-2"
+
 // ===== INITIALIZE MODULES =====
 
 // Αισθητήρες υπερήχων
@@ -83,6 +90,9 @@ TinyGPSPlus gps;
 
 // Αισθητήρας INA260 Ρεύματος/Τάσης/Ισχύος
 INA260_WE ina260 = INA260_WE(INA260_ADDRESS);
+
+// Αισθητήρας MQ-2 για ανίχνευση αερίων
+MQUnifiedsensor MQ2(BOARD, VOLTAGE_RESOLUTION, ADC_BIT_RESOLUTION, MQ2_PIN, TYPE);
 
 // ===== CONSTANTS =====
 
@@ -234,6 +244,34 @@ void setup() {
   ina260.setAverage(AVERAGE_16);
   
   Serial.println("INA260 initialized successfully");
+  
+  // Εκκίνηση αισθητήρα MQ-2
+  MQ2.setRegressionMethod(1); // _PPM =  a*ratio^b
+  MQ2.init(); 
+  
+  // Ρύθμιση παραμέτρων για CO (Carbon Monoxide)
+  MQ2.setA(574.25); MQ2.setB(-2.222); // Παράμετροι από datasheet για CO
+  
+  // Βαθμονόμηση αισθητήρα (R0 calculation)
+  Serial.print("Calibrating MQ-2 sensor...");
+  float calcR0 = 0;
+  for(int i = 1; i<=10; i ++) {
+    MQ2.update(); // Update data, the arduino will read the voltage from the analog pin
+    calcR0 += MQ2.calibrate(9.83); // Καθαρός αέρας ratio, τυπικά 9.83 για MQ-2
+  }
+  MQ2.setR0(calcR0/10);
+  Serial.println(" done!");
+  
+  if(isinf(calcR0)) {
+    Serial.println("Warning: Connection issue, R0 is infinite (Open circuit detected)");
+    while(1);
+  }
+  if(calcR0 == 0) {
+    Serial.println("Warning: Connection issue found, R0 is zero (Analog pin shorts to ground)");
+    while(1);
+  }
+  
+  Serial.println("MQ-2 sensor initialized successfully");
   
   // Εκκίνηση LoRa
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
@@ -597,14 +635,20 @@ void readSensors() {
 }
 
 void readMQ2(int &co_ppm, int &lpg_ppm) {
-  // Ανάγνωση αισθητήρα MQ-2
-  int mq2_raw = analogRead(MQ2_PIN);
+  // Ενημέρωση δεδομένων αισθητήρα MQ-2
+  MQ2.update(); // Ανάγνωση τάσης από το analog pin
   
-  // Μετατροπή ακατέργαστης τιμής σε ppm (απλοποιημένη προσέγγιση)
-  // Σε πραγματική υλοποίηση, θα χρησιμοποιούσες το datasheet του αισθητήρα
-  // για πιο ακριβή μετατροπή
-  co_ppm = map(mq2_raw, 0, 1023, 0, 1000);
-  lpg_ppm = map(mq2_raw, 0, 1023, 0, 5000);
+  // Ανάγνωση CO (Carbon Monoxide) με παραμέτρους για CO
+  MQ2.setA(574.25); MQ2.setB(-2.222); // Παράμετροι για CO από datasheet
+  co_ppm = (int)MQ2.readSensor(); // Ανάγνωση CO σε ppm
+  
+  // Ανάγνωση LPG με παραμέτρους για LPG
+  MQ2.setA(44771); MQ2.setB(-3.245); // Παράμετροι για LPG από datasheet
+  lpg_ppm = (int)MQ2.readSensor(); // Ανάγνωση LPG σε ppm
+  
+  // Περιορισμός τιμών σε λογικά όρια
+  co_ppm = constrain(co_ppm, 0, 10000);
+  lpg_ppm = constrain(lpg_ppm, 0, 10000);
 }
 
 void updateGPS() {
