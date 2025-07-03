@@ -91,7 +91,7 @@ const int NORMAL_SPEED = 200;     // Κανονική ταχύτητα κινη�
 const int SLOW_SPEED = 50;        // Χαμηλή ταχύτητα κινητήρα (PWM)
 const int DESIRED_RIGHT_DIST = 20; // Επιθυμητή απόσταση από δεξιό τοίχο (cm)
 const int FRONT_SLOW_DIST = 50;   // Απόσταση για επιβράδυνση (cm)
-const int FRONT_STOP_DIST = 20;   // Απόσταση για στάση/στροφή (cm)
+const int FRONT_STOP_DIST = 20;   // Απόσταση για στάση (cm)
 
 // Όρια αισθητήρων
 const int CO_THRESHOLD = 50;      // Όριο CO σε ppm
@@ -260,7 +260,7 @@ void setup() {
   startTime = millis();
   lastBatteryTime = startTime;
   
-  Serial.println("Το ρομπότ εκκινήθηκε. Προθέρμανση αισθητήρα MQ-2...");
+  Serial.println("Το μΕ εκκινήθηκε. Προθέρμανση αισθητήρα MQ-2...");
   Serial.println("Ενισχυμένη διαχείριση μπαταρίας και ενεργό GPS PPS");
 }
 
@@ -270,8 +270,6 @@ void ppsInterrupt() {
   ppsTime = micros();
   ppsReceived = true;
 }
-
-// ===== ΚΥΡΙΟΣ ΒΡΟΧΟΣ =====
 
 void loop() {
   // Ενημέρωση τρέχοντος χρόνου
@@ -287,7 +285,7 @@ void loop() {
           if (gps.location.isValid() && gps.satellites.value() >= GPS_MIN_SATELLITES) {
             startLat = gps.location.lat();
             startLon = gps.location.lng();
-            missionStarted = true;
+            missionStarted = true; // Η αποστολή ξεκινάει με GPS
             saveCurrentWaypoint();
             Serial.println("Ελήφθη θέση GPS. Έναρξη αποστολής!");
             Serial.print("Θέση εκκίνησης: ");
@@ -303,7 +301,7 @@ void loop() {
       if (currentMillis - startTime >= MQ2_WARMUP_TIME + 5000 || missionStarted) {
         if (!missionStarted) {
           Serial.println("Δεν υπάρχει λήψη GPS. Έναρξη αποστολής χωρίς GPS.");
-          missionStarted = true;
+          missionStarted = true; // Η αποστολή ξεκινάει χωρίς GPS
         }
         
         // Αρχικός έλεγχος μπαταρίας
@@ -315,44 +313,33 @@ void loop() {
         Serial.println("% SOC");
         
         // Έτοιμο για εκκίνηση
-        Serial.println("Το ρομπότ εκκινήθηκε και είναι έτοιμο!");
-        
-        // Μετάβαση σε κατάσταση πλοήγησης
+        Serial.println("Το μΕ εκκινήθηκε και είναι έτοιμο!");
         changeState(NAVIGATING);
       }
     }
   }
   
-  // Ανάγνωση δεδομένων μπαταρίας με υψηλή συχνότητα για ακριβή μέτρηση coulomb
+  // Ανάγνωση δεδομένων μπαταρίας σύμφωνα με το ορισμένο χρονικό διάστημα για ακριβή μέτρηση
   if (currentMillis - previousBatteryMillis >= BATTERY_INTERVAL) {
     previousBatteryMillis = currentMillis;
     readBatteryData();
     updateBatteryState();
   }
   
-  // Ανάγνωση αισθητήρων σε τακτά διαστήματα
+  // Ανάγνωση αισθητήρων σύμφωνα με το ορισμένο χρονικό διάστημα
   if (currentMillis - previousSensorMillis >= SENSOR_INTERVAL) {
     previousSensorMillis = currentMillis;
     readSensors();
-    
-    // Έλεγχος για φωτιά/αέριο
     checkForFire();
   }
   
-  // Διαχείριση πλοήγησης βάσει τρέχουσας κατάστασης
   handleNavigation();
   
-  // Αποστολή τηλεμετρίας κάθε 1Hz
+  // Αποστολή τηλεμετρίας σύμφωνα με το ορισμένο χρονικό διάστημα
   if (ppsTime - lastTelemetryPPSTime >= TELEMETRY_INTERVAL) {
     lastTelemetryPPSTime = ppsTime;
-    
-    // Ενημέρωση δεδομένων GPS
     updateGPS();
-    
-    // Αποστολή τηλεμετρίας
     sendTelemetry();
-    
-    // Εκτύπωση πλήρους κατάστασης συστήματος
     printSystemStatus();
   }
 }
@@ -360,24 +347,21 @@ void loop() {
 // ===== ΣΥΝΑΡΤΗΣΕΙΣ ΔΙΑΧΕΙΡΙΣΗΣ ΜΠΑΤΑΡΙΑΣ =====
 
 void readBatteryData() {
-  // Ανάγνωση τάσης, ρεύματος και ισχύος από INA260
   batteryVoltage = ina260.getBusVoltage_V();
   batteryCurrent = ina260.getCurrent_mA();
   batteryPower = ina260.getPower_mW();
-  
-  // Διαχείριση αρνητικού ρεύματος (φόρτιση - δεν πρέπει να συμβαίνει σε αυτή την εφαρμογή)
   if (batteryCurrent < 0) {
     batteryCurrent = 0;
   }
 }
 
 void updateBatteryState() {
-  // Υπολογισμός διαφοράς χρόνου για μέτρηση coulomb
+  // Υπολογισμός διαφοράς χρόνου για μέτρηση
   unsigned long currentTime = millis();
   float deltaTimeHours = (currentTime - lastBatteryTime) / 3600000.0; // Μετατροπή ms σε ώρες
   lastBatteryTime = currentTime;
   
-  // Μέτρηση coulomb: ολοκλήρωση ρεύματος ως προς το χρόνο
+  // Υπολογισμός καταναλωθείσας ενέργειας σε mAh
   float consumedThisCycle = batteryCurrent * deltaTimeHours; // mAh
   consumedCapacity += consumedThisCycle;
   
@@ -385,26 +369,21 @@ void updateBatteryState() {
   remainingCapacity = BATTERY_CAPACITY_MAH - consumedCapacity;
   if (remainingCapacity < 0) remainingCapacity = 0;
   
-  // Υπολογισμός SOC με συνδυασμό τάσης και coulomb counting
+  // Υπολογισμός SOC
   float voltageSoc = calculateVoltageBasedSOC(batteryVoltage);
   float coulombSoc = (remainingCapacity / BATTERY_CAPACITY_MAH) * 100.0;
   
-  // Συνδυασμός με βάρη (προτίμηση coulomb counting όταν υπάρχουν δεδομένα)
+  // Υπολογισμός ποσοστού φόρτισης με συνδυασμό coulomb counting και τάσης και διαφορετική βαρύτητα ανάλογα με την κατανάλωση
   if (consumedCapacity > 10) { // Μετά από κάποια κατανάλωση, εμπιστεύσου περισσότερο το coulomb counting
     chargePercentage = (coulombSoc * 0.8) + (voltageSoc * 0.2);
   } else {
     chargePercentage = (coulombSoc * 0.3) + (voltageSoc * 0.7);
   }
-  
-  // Περιορισμός SOC σε έγκυρο εύρος
   chargePercentage = constrain(chargePercentage, 0, 100);
-  
-  // Ενημέρωση συνολικής καταναλωθείσας ενέργειας
   totalEnergyConsumed += (batteryPower * deltaTimeHours) / 1000.0; // Μετατροπή mWh σε Wh
 }
 
 float calculateVoltageBasedSOC(float voltage) {
-  // Παρεμβολή SOC από την καμπύλη εκφόρτισης
   if (voltage >= dischargeCurve[0].voltage) {
     return 100.0;
   }
@@ -412,13 +391,12 @@ float calculateVoltageBasedSOC(float voltage) {
     return 0.0;
   }
   
-  // Βρες τα δύο σημεία για παρεμβολή
+  // Βρες σε ποιο εύρος τάσης του πίνακα είναι η μέτρηση
   for (int i = 0; i < DISCHARGE_CURVE_POINTS - 1; i++) {
     if (voltage <= dischargeCurve[i].voltage && voltage >= dischargeCurve[i + 1].voltage) {
-      // Γραμμική παρεμβολή
-      // Βρες σε ποιο εύρος τάσης του πίνακα είναι η μέτρηση
+      // Βρες την ακριβή διαφορά τάσης μεταξύ των δύο γειτονικών τιμών του πίνακα
       float voltageRange = dischargeCurve[i].voltage - dischargeCurve[i + 1].voltage;
-      // Βρες το εύρος του ποσοστού του πίνακα είναι η μέτρηση
+      // Βρες την ακριβή διαφορά SOC μεταξύ των δύο γειτονικών τιμών του πίνακα
       float socRange = dischargeCurve[i].soc - dischargeCurve[i + 1].soc;
       // Υπολόγισε την διαφορά της μέτρησης από την αμέσως μεγαλύτερη τιμή τάσης του πίνακα
       float voltageOffset = dischargeCurve[i].voltage - voltage;
@@ -473,30 +451,30 @@ void changeState(RobotState newState) {
 void handleNavigation() {
   switch (currentState) {
     case NAVIGATING:
-      // Navigation logic based on ultrasonic sensors
+      // Η κίνηση βασίζεται στις μετρήσεις των αισθητήρων υπερήχων
       if (frontDistance > FRONT_SLOW_DIST) {
-        // Path is clear ahead, follow right wall at normal speed
+        // Αν δεν υπάρχει εμπόδιο μπροστά, προχωρά κανονικά κρατώντας την επιθυμητή απόσταση από τον δεξί τοίχο
         followWall(rightDistance, NORMAL_SPEED);
       } 
       else if (frontDistance <= FRONT_SLOW_DIST && frontDistance > FRONT_STOP_DIST) {
-        // Obstacle ahead but not too close, slow down
+        // Εμπόδιο μπροστά, αλλά όχι πολύ κοντά
         followWall(rightDistance, SLOW_SPEED);
       } 
       else if (frontDistance <= FRONT_STOP_DIST) {
-        // Obstacle too close, need to turn
+        // Εμπόδιο πολύ κοντά μπροστά, σταμάτα
         stopMotors();
         
-        // Check if right is open (right-hand rule)
+        // Έλεγχος αν δεξιά ή αριστερά υπάρχουν εμπόδια
         if (rightDistance > DESIRED_RIGHT_DIST + 5) {
-          // Right is open, turn right
+          // Ελέυθερα από δεξιά
           changeState(TURNING_RIGHT);
         } 
         else if (leftDistance > DESIRED_RIGHT_DIST + 5) {
-          // Left is open, turn left
+          // Ελεύθερα από αριστερά
           changeState(TURNING_LEFT);
         } 
         else {
-          // Both sides blocked, turn around
+          // Δεξιά και αριστερά υπάρχουν εμπόδια, κάνε αναστροφή
           changeState(TURNING_AROUND);
         }
       }
@@ -583,25 +561,25 @@ void handleNavigation() {
 }
 
 void followWall(int rightDist, int speed) {
-  // Wall following using right-hand rule
+  // Κανόνας δεξιού χεριού
   if (rightDist > DESIRED_RIGHT_DIST + 5) {
-    // Too far from wall, steer right
+    // Αν έχεις απομακρυνθεί από τον τοίχο, πλησίασε
     steerRight();
   } 
   else if (rightDist < DESIRED_RIGHT_DIST - 2) {
-    // Too close to wall, steer left
+    // Αν είσαι πολύ κοντά στον τοίχο, απομακρύνσου
     steerLeft();
   } 
   else {
-    // Good distance from wall, go straight
+    // ΕΠιθυμητή απόσταση από τον τοίχο, κράτα ευθεία
     steerStraight();
   }
   
-  // Move forward at specified speed
+  // Προχώρησε εμπρός με την καθορισμένη ταχύτητα
   moveForward(speed);
 }
 
-// ===== SENSOR FUNCTIONS =====
+// ===== Λειτουργίες Αισθητήρων =====
 
 void readSensors() {
   // Ανάγνωση αισθητήρων υπερήχων
