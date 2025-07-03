@@ -795,7 +795,7 @@ String formatTelemetryData() {
   data += String(coPPM) + ",";
   data += String(batteryVoltage, 2) + ",";
   data += String(chargePercentage, 1) + ",";
-  data += String(estimateRemainingTime(), 1) + ",";
+  data += String(estimateRemainingTime(), 1);
   
   return data;
 }
