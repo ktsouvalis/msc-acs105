@@ -301,7 +301,7 @@ void setup() {
   startTime = millis();
   lastBatteryTime = startTime;
   
-  Serial.println("Το μΕ εκκινήθηκε. Προθέρμανση αισθητήρα MQ-2...");
+  Serial.println("Το μη επανδρωμένο εκκινήθηκε. Προθέρμανση αισθητήρα MQ-2...");
   Serial.println("Ενισχυμένη διαχείριση μπαταρίας και ενεργό GPS PPS");
 }
 
@@ -354,7 +354,7 @@ void loop() {
         Serial.println("% SOC");
         
         // Έτοιμο για εκκίνηση
-        Serial.println("Το μΕ εκκινήθηκε και είναι έτοιμο!");
+        Serial.println("Το μη επανδρωμένο εκκινήθηκε και είναι έτοιμο!");
         changeState(NAVIGATING);
       }
     }
